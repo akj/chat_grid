@@ -31,7 +31,6 @@ from .auth_service import AuthError, AuthService
 from .acoustic_zones import (
     client_acoustic_zone_id,
     client_position_packet,
-    floor_acoustic_zone_id,
 )
 from .client import ClientConnection
 from .config import load_config
@@ -73,11 +72,9 @@ from .models import (
     AdminUsersListResultPacket,
     BroadcastChatMessagePacket,
     BroadcastNicknamePacket,
-    BroadcastTeleportCompletePacket,
     ChatMessagePacket,
     ClientPacket,
     LiveKitTokenPacket,
-    NicknameResultPacket,
     PingPacket,
     PongPacket,
     RemoteUser,
@@ -90,16 +87,13 @@ from .models import (
     StructureSlideWallPacket,
     StructureUpdateWallPacket,
     StructureUpsertPacket,
-    TeleportCompletePacket,
-    UpdateNicknamePacket,
-    UpdatePositionPacket,
     UserLeftPacket,
     WelcomeReadyPacket,
     WelcomePacket,
-    WallStructure,
-    WorldSoundPacket,
     WorldItem,
 )
+from .movement import Movement
+from .nicknames import Nicknames
 from .network_security import normalize_origin
 from .structure_service import StructureError, StructureService
 from .ui_metadata import (
@@ -116,8 +110,6 @@ SYSTEM_RANDOM = random.SystemRandom()
 MAX_ACTIVE_PIANO_KEYS_PER_CLIENT = 12
 PIANO_RECORDING_MAX_MS = 30_000
 PIANO_RECORDING_MAX_EVENTS = 4096
-MOVEMENT_TICK_MS = 200
-MOVEMENT_MAX_STEPS_PER_TICK = 1
 POSITION_PERSIST_DEBOUNCE_MS = 5_000
 LAST_SEEN_PERSIST_DEBOUNCE_MS = 30_000
 AUTH_HASH_MAX_CONCURRENCY = 8
@@ -222,8 +214,28 @@ class SignalingServer:
             presets=structure_presets or {},
         )
         self.item_runtime = ItemRuntime(self)
-        self.movement_tick_ms = MOVEMENT_TICK_MS
-        self.movement_max_steps_per_tick = MOVEMENT_MAX_STEPS_PER_TICK
+        self.movement = Movement(
+            delivery=self.delivery,
+            structures=self.structure_service,
+            in_bounds=self._is_in_bounds,
+            now_ms=lambda: self.item_service.now_ms(),
+            persist_position=self._persist_client_position,
+            sync_carried_item=self.item_runtime.sync_carried_item,
+        )
+        self.nicknames = Nicknames(
+            delivery=self.delivery,
+            roster=self.clients,
+            auth_service=self.auth_service,
+            has_permission=self._client_has_permission,
+        )
+        self._packet_routes = (
+            self._handle_admin_packet,
+            self._handle_structure_packet,
+            self.movement.handle_packet,
+            self.nicknames.handle_packet,
+            self._handle_chat_packet,
+            self.item_runtime.handle_packet,
+        )
         self.instance_id = str(uuid.uuid4())
         self.release_version, self.expected_client_revision = (
             self._resolve_client_version_metadata()
@@ -348,11 +360,6 @@ class SignalingServer:
         """Expose current item map owned by the item service."""
 
         return self.item_service.items
-
-    def _nickname_key(self, nickname: str) -> str:
-        """Normalize nickname for case-insensitive comparisons."""
-
-        return nickname.casefold()
 
     def _persist_client_position(
         self, client: ClientConnection, *, force: bool = False
@@ -672,19 +679,6 @@ class SignalingServer:
             delay_ms / 1000, self._flush_state_save
         )
 
-    def _is_nickname_taken(
-        self, nickname: str, exclude_client_id: str | None = None
-    ) -> bool:
-        """Check whether nickname is already used by another active client."""
-
-        wanted = self._nickname_key(nickname)
-        for other in self.clients.values():
-            if exclude_client_id is not None and other.id == exclude_client_id:
-                continue
-            if self._nickname_key(other.nickname) == wanted:
-                return True
-        return False
-
     @staticmethod
     def _client_ip(client: ClientConnection) -> str:
         """Extract best-effort remote IP string for audit logs and auth throttling."""
@@ -825,28 +819,6 @@ class SignalingServer:
         """Check whether a coordinate is inside server-authoritative world bounds."""
 
         return 0 <= x < self.grid_size and 0 <= y < self.grid_size
-
-    def _movement_window_index(self, now_ms: int) -> int:
-        """Return current movement rate-limit window index for a server timestamp."""
-
-        return max(0, now_ms // self.movement_tick_ms)
-
-    def _consume_movement_budget(
-        self, client: ClientConnection, now_ms: int, requested_delta: int
-    ) -> bool:
-        """Consume per-window movement budget; return whether the move is allowed."""
-
-        window_index = self._movement_window_index(now_ms)
-        if client.movement_window_index != window_index:
-            client.movement_window_index = window_index
-            client.movement_window_steps_used = 0
-        remaining = max(
-            0, self.movement_max_steps_per_tick - client.movement_window_steps_used
-        )
-        if requested_delta > remaining:
-            return False
-        client.movement_window_steps_used += requested_delta
-        return True
 
     async def start(self) -> None:
         """Start websocket serving and run until cancelled."""
@@ -989,8 +961,8 @@ class SignalingServer:
             ],
             worldConfig={
                 "gridSize": self.grid_size,
-                "movementTickMs": self.movement_tick_ms,
-                "movementMaxStepsPerTick": self.movement_max_steps_per_tick,
+                "movementTickMs": self.movement.tick_ms,
+                "movementMaxStepsPerTick": self.movement.max_steps_per_tick,
                 "floors": [dict(floor) for floor in FLOOR_DEFINITIONS],
                 "elevatorDoorClipSeconds": {
                     "open": DOOR_OPEN_CLIP_SECONDS,
@@ -1050,7 +1022,7 @@ class SignalingServer:
         now_ms = self.item_service.now_ms()
         self._refresh_client_permissions(client)
         client.last_position_update_ms = now_ms
-        client.movement_window_index = self._movement_window_index(now_ms)
+        client.movement_window_index = self.movement.window_index(now_ms)
         client.movement_window_steps_used = 0
         client.world_ready = False
         await self._send_welcome(client)
@@ -1923,312 +1895,39 @@ class SignalingServer:
             )
             return
 
-        if await self._handle_admin_packet(client, packet):
-            return
-
-        if await self._handle_structure_packet(client, packet):
-            return
-
-        if isinstance(packet, UpdatePositionPacket):
-            if client.elevator_id is not None:
-                await self.delivery.send(
-                    client,
-                    client_position_packet(client),
-                )
-                return
-            if not self._is_in_bounds(packet.x, packet.y) or packet.z != client.z:
-                PACKET_LOGGER.warning(
-                    "out-of-bounds position ignored id=%s x=%d y=%d grid_size=%d",
-                    client.id,
-                    packet.x,
-                    packet.y,
-                    self.grid_size,
-                )
-                await self.delivery.send(
-                    client,
-                    client_position_packet(client),
-                )
-                return
-            now_ms = self.item_service.now_ms()
-            requested_delta = max(abs(packet.x - client.x), abs(packet.y - client.y))
-            if not self._consume_movement_budget(client, now_ms, requested_delta):
-                remaining = max(
-                    0,
-                    self.movement_max_steps_per_tick
-                    - client.movement_window_steps_used,
-                )
-                PACKET_LOGGER.warning(
-                    "position rate limit ignored id=%s from=%d,%d to=%d,%d requested_delta=%d remaining_budget=%d window=%d",
-                    client.id,
-                    client.x,
-                    client.y,
-                    packet.x,
-                    packet.y,
-                    requested_delta,
-                    remaining,
-                    client.movement_window_index,
-                )
-                await self.delivery.send(
-                    client,
-                    client_position_packet(client),
-                )
-                return
-            crossed_walls = self.structure_service.walls_crossed_for_move(
-                x=client.x,
-                y=client.y,
-                z=client.z,
-                next_x=packet.x,
-                next_y=packet.y,
-            )
-            blocking_wall = self.structure_service.blocking_wall_for_move(
-                x=client.x,
-                y=client.y,
-                z=client.z,
-                next_x=packet.x,
-                next_y=packet.y,
-            )
-            if blocking_wall is not None:
-                await self._broadcast_wall_sound(
-                    blocking_wall,
-                    x=client.x,
-                    y=client.y,
-                    z=client.z,
-                    exclude=client,
-                )
-                await self.delivery.send(client, client_position_packet(client))
-                return
-            client.x = packet.x
-            client.y = packet.y
-            client.last_position_update_ms = now_ms
-            self._persist_client_position(client)
-            await self.delivery.send(
-                client,
-                client_position_packet(client),
-            )
-            await self.delivery.broadcast(
-                client_position_packet(client),
-                exclude=client,
-            )
-            for crossed_wall in crossed_walls:
-                await self._broadcast_wall_sound(
-                    crossed_wall,
-                    x=client.x,
-                    y=client.y,
-                    z=client.z,
-                    exclude=client,
-                )
-            await self.item_runtime.sync_carried_item(client)
-            return
-
-        if isinstance(packet, TeleportCompletePacket):
-            if client.elevator_id is not None:
-                await self.delivery.send(
-                    client,
-                    client_position_packet(client),
-                )
-                return
-            if not self._is_in_bounds(packet.x, packet.y) or packet.z != client.z:
-                PACKET_LOGGER.warning(
-                    "out-of-bounds teleport ignored id=%s x=%d y=%d grid_size=%d",
-                    client.id,
-                    packet.x,
-                    packet.y,
-                    self.grid_size,
-                )
-                await self.delivery.send(
-                    client,
-                    client_position_packet(client),
-                )
+        for route in self._packet_routes:
+            if await route(client, packet):
                 return
 
-            client.x = packet.x
-            client.y = packet.y
-            client.last_position_update_ms = self.item_service.now_ms()
-            self._persist_client_position(client, force=True)
-            await self.delivery.send(
-                client,
-                client_position_packet(client),
-            )
-            await self.delivery.broadcast(
-                client_position_packet(client),
-                exclude=client,
-            )
-            await self.item_runtime.sync_carried_item(client)
-            await self.delivery.broadcast(
-                BroadcastTeleportCompletePacket(
-                    type="teleport_complete",
-                    id=client.id,
-                    x=client.x,
-                    y=client.y,
-                    z=client.z,
-                    acousticZoneId=client_acoustic_zone_id(client),
-                ),
-                exclude=client,
-            )
-            return
+    async def _handle_chat_packet(
+        self, client: ClientConnection, packet: ClientPacket
+    ) -> bool:
+        """Handle chat permission checks, commands, and message broadcasts."""
 
-        if isinstance(packet, UpdateNicknamePacket):
-            if not self._client_has_permission(client, "profile.update_nickname"):
-                await self.delivery.send(
-                    client,
-                    NicknameResultPacket(
-                        type="nickname_result",
-                        accepted=False,
-                        requestedNickname=packet.nickname,
-                        effectiveNickname=client.nickname,
-                        reason="Not authorized to change nickname.",
-                    ),
-                )
-                return
-            requested_nickname = packet.nickname.strip()
-            if not requested_nickname:
-                await self.delivery.send(
-                    client,
-                    NicknameResultPacket(
-                        type="nickname_result",
-                        accepted=False,
-                        requestedNickname=packet.nickname,
-                        effectiveNickname=client.nickname,
-                        reason="Nickname is required.",
-                    ),
-                )
-                return
-            old_nickname = client.nickname
-            if self._is_nickname_taken(requested_nickname, exclude_client_id=client.id):
-                await self.delivery.send(
-                    client,
-                    NicknameResultPacket(
-                        type="nickname_result",
-                        accepted=False,
-                        requestedNickname=requested_nickname,
-                        effectiveNickname=client.nickname,
-                        reason="Nickname already in use.",
-                    ),
-                )
-                return
-            if requested_nickname == old_nickname:
-                await self.delivery.send(
-                    client,
-                    NicknameResultPacket(
-                        type="nickname_result",
-                        accepted=True,
-                        requestedNickname=requested_nickname,
-                        effectiveNickname=client.nickname,
-                    ),
-                )
-                return
-            client.nickname = requested_nickname
-            if client.user_id:
-                self.auth_service.set_last_nickname(client.user_id, client.nickname)
-            if old_nickname == "user...":
-                LOGGER.info("user login id=%s nickname=%s", client.id, client.nickname)
-            else:
-                LOGGER.info(
-                    "nickname change id=%s old=%s new=%s",
-                    client.id,
-                    old_nickname,
-                    client.nickname,
-                )
-            await self.delivery.send(
-                client,
-                NicknameResultPacket(
-                    type="nickname_result",
-                    accepted=True,
-                    requestedNickname=requested_nickname,
-                    effectiveNickname=client.nickname,
-                ),
-            )
-            await self.delivery.broadcast(
-                BroadcastNicknamePacket(
-                    type="update_nickname", id=client.id, nickname=client.nickname
-                ),
-                exclude=client,
-            )
-            if old_nickname == "user...":
-                await self.delivery.broadcast(
-                    BroadcastChatMessagePacket(
-                        type="chat_message",
-                        message=f"{client.nickname} has logged in.",
-                        system=True,
-                    ),
-                    exclude=client,
-                )
-            else:
-                await self.delivery.broadcast(
-                    BroadcastChatMessagePacket(
-                        type="chat_message",
-                        message=f"{old_nickname} is now known as {client.nickname}.",
-                        system=True,
-                    ),
-                    exclude=client,
-                )
-            self_message = (
-                f"Welcome. Logged in as {client.nickname}."
-                if old_nickname == "user..."
-                else f"You are now known as {client.nickname}."
-            )
+        if not isinstance(packet, ChatMessagePacket):
+            return False
+        if not self._client_has_permission(client, "chat.send"):
             await self.delivery.send(
                 client,
                 BroadcastChatMessagePacket(
                     type="chat_message",
-                    message=self_message,
+                    message="You are not allowed to send chat messages.",
                     system=True,
                 ),
             )
-            return
-
-        if isinstance(packet, ChatMessagePacket):
-            if not self._client_has_permission(client, "chat.send"):
-                await self.delivery.send(
-                    client,
-                    BroadcastChatMessagePacket(
-                        type="chat_message",
-                        message="You are not allowed to send chat messages.",
-                        system=True,
-                    ),
-                )
-                return
-            if await self._handle_chat_command(client, packet.message):
-                return
-            await self.delivery.broadcast(
-                BroadcastChatMessagePacket(
-                    type="chat_message",
-                    message=packet.message,
-                    senderId=client.id,
-                    senderNickname=client.nickname,
-                    system=False,
-                )
-            )
-            return
-
-        if await self.item_runtime.handle_packet(client, packet):
-            return
-
-    async def _broadcast_wall_sound(
-        self,
-        wall: WallStructure,
-        *,
-        x: int,
-        y: int,
-        z: int,
-        exclude: ClientConnection,
-    ) -> None:
-        """Broadcast one validated wall impact/crossing sound to other users."""
-
-        sound = str(wall.contactSound).strip()
-        if not sound:
-            return
+            return True
+        if await self._handle_chat_command(client, packet.message):
+            return True
         await self.delivery.broadcast(
-            WorldSoundPacket(
-                type="world_sound",
-                sound=sound,
-                x=x,
-                y=y,
-                z=z,
-                acousticZoneId=floor_acoustic_zone_id(z),
-            ),
-            exclude=exclude,
+            BroadcastChatMessagePacket(
+                type="chat_message",
+                message=packet.message,
+                senderId=client.id,
+                senderNickname=client.nickname,
+                system=False,
+            )
         )
+        return True
 
     def _find_by_id(self, client_id: str) -> ClientConnection | None:
         """Resolve a client id to an active connection."""

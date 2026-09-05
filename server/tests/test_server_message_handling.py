@@ -1096,8 +1096,8 @@ async def test_update_position_enforces_cumulative_budget_per_tick(
     world = make_world(grid_size=41)
     server, transport = world.server, world.transport
     observer = world.join("observer", x=40, y=40)
-    server.movement_tick_ms = 100
-    server.movement_max_steps_per_tick = 2
+    server.movement.tick_ms = 100
+    server.movement.max_steps_per_tick = 2
     client = world.join("tester", x=5, y=5, client_id="u1")
 
     fixed_now = 10_000
@@ -1162,8 +1162,8 @@ async def test_update_position_rate_reject_sends_self_correction(
     world = make_world(grid_size=41)
     server, transport = world.server, world.transport
     client = world.join("tester", x=5, y=5, client_id="u1")
-    server.movement_tick_ms = 100
-    server.movement_max_steps_per_tick = 1
+    server.movement.tick_ms = 100
+    server.movement.max_steps_per_tick = 1
 
     fixed_now = 10_000
     monkeypatch.setattr(server.item_service, "now_ms", lambda: fixed_now)

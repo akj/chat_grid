@@ -14,6 +14,25 @@ from .conftest import World
 
 
 @pytest.mark.asyncio
+async def test_taken_nickname_is_rejected(world: World) -> None:
+    server, transport = world.server, world.transport
+    observer = world.join("Jage")
+    client = world.join("Alice")
+
+    await server._handle_message(
+        client, json.dumps({"type": "update_nickname", "nickname": " JAGE "})
+    )
+
+    result = transport.last_packet_of_type(client, NicknameResultPacket)
+    assert not result.accepted
+    assert result.reason == "Nickname already in use."
+    assert result.requestedNickname == "JAGE"
+    assert result.effectiveNickname == client.nickname == "Alice"
+    assert transport.packets_to(client) == [result]
+    assert transport.packets_to(observer) == []
+
+
+@pytest.mark.asyncio
 async def test_same_nickname_same_case_is_noop(
     world: World,
 ) -> None:

@@ -9,6 +9,8 @@
 - `server/`: Python signaling service.
   - `app/server.py`: websocket lifecycle + packet routing.
   - `app/delivery.py`: packet delivery to clients (send, broadcast) over a transport adapter; tests use the recording transport via the `world` fixture.
+  - `app/movement.py`: player stepping, teleporting, and movement rate limits.
+  - `app/nicknames.py`: nickname uniqueness and update handling.
   - `app/floors.py`: canonical world floor elevations and display names.
   - `app/client.py`: client connection model.
   - `app/item_service.py`: item persistence + hydration.
