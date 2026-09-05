@@ -13,6 +13,7 @@ from .auth_service import AuthService
 from .acoustic_zones import client_acoustic_zone_id, floor_acoustic_zone_id
 from .client import ClientConnection
 from .delivery import Delivery
+from .floors import floor_name
 from .item_catalog import (
     get_item_definition,
     get_item_use_cooldown_ms,
@@ -21,7 +22,8 @@ from .item_catalog import (
 from .item_service import ItemService
 from .item_type_handlers import get_item_type_handler
 from .items.types.clock.runtime import ClockRuntime
-from .items.types.elevator.runtime import ElevatorRuntime, ElevatorRuntimeCallbacks
+from .items.types.elevator.car import ElevatorCar
+from .items.types.elevator.runtime import ElevatorRuntime
 from .items.types.piano.runtime import PianoRuntime
 from .items.types.radio_station.runtime import RadioRuntime
 from .models import (
@@ -62,8 +64,6 @@ class ItemRuntimeHost(Protocol):
 
     def _is_in_bounds(self, x: int, y: int) -> bool: ...
 
-    def _floor_name(self, z: int) -> str: ...
-
     def _persist_client_position(
         self, client: ClientConnection, *, force: bool = False
     ) -> None: ...
@@ -83,23 +83,7 @@ class ItemRuntime:
         self.piano = PianoRuntime(self)
         self.radio = RadioRuntime(self)
         self.clock = ClockRuntime(self)
-        self.elevator = ElevatorRuntime(
-            ElevatorRuntimeCallbacks(
-                get_item=lambda item_id: self.items.get(item_id),
-                iter_clients=lambda: self.clients.values(),
-                delivery=self.delivery,
-                broadcast_item=self.broadcast_item,
-                send_item_result=self.send_result,
-                request_state_save=self.request_state_save,
-                persist_client_position=lambda client: (
-                    self.host._persist_client_position(client, force=True)
-                ),
-                find_carried_item=self.item_service.find_carried_item,
-                now_ms=self.item_service.now_ms,
-                floor_name=self.floor_name,
-                get_emit_range=self.get_emit_range,
-            )
-        )
+        self.elevator = ElevatorRuntime(self)
 
     @property
     def auth_service(self) -> AuthService:
@@ -177,10 +161,10 @@ class ItemRuntime:
 
         self.host._request_state_save()
 
-    def floor_name(self, z: int) -> str:
-        """Return the configured label for a floor elevation."""
+    def persist_client_position(self, client: ClientConnection) -> None:
+        """Persist a rider's completed landing without movement debouncing."""
 
-        return self.host._floor_name(z)
+        self.host._persist_client_position(client, force=True)
 
     def get_client_by_id(self, client_id: str) -> ClientConnection | None:
         """Resolve one connected client by runtime id."""
@@ -246,7 +230,7 @@ class ItemRuntime:
         item = self.item_service.default_item(client, packet.itemType)
         if item.type == "elevator":
             item.z = 0
-            item.params["currentZ"] = client.z
+            ElevatorCar(item).place_at(client.z)
         if not self._item_footprint_in_bounds(item):
             await self.send_result(
                 client,
@@ -272,7 +256,7 @@ class ItemRuntime:
         await self.delivery.broadcast(
             BroadcastChatMessagePacket(
                 type="chat_message",
-                message=f"{client.nickname} placed {item_text} at {item.x}, {item.y}, {item.z}, {self.floor_name(item.z)}.",
+                message=f"{client.nickname} placed {item_text} at {item.x}, {item.y}, {item.z}, {floor_name(item.z)}.",
                 system=True,
             ),
             exclude=client,
@@ -281,7 +265,7 @@ class ItemRuntime:
             client,
             True,
             "add",
-            f"You placed {item_text} at {item.x}, {item.y}, {item.z}, {self.floor_name(item.z)}.",
+            f"You placed {item_text} at {item.x}, {item.y}, {item.z}, {floor_name(item.z)}.",
             item.id,
         )
         return
@@ -429,7 +413,7 @@ class ItemRuntime:
         await self.delivery.broadcast(
             BroadcastChatMessagePacket(
                 type="chat_message",
-                message=f"{client.nickname} dropped {item_text} at {drop_item.x}, {drop_item.y}, {drop_item.z}, {self.floor_name(drop_item.z)}.",
+                message=f"{client.nickname} dropped {item_text} at {drop_item.x}, {drop_item.y}, {drop_item.z}, {floor_name(drop_item.z)}.",
                 system=True,
             ),
             exclude=client,
@@ -438,7 +422,7 @@ class ItemRuntime:
             client,
             True,
             "drop",
-            f"Dropped {drop_item.title} at {drop_item.x}, {drop_item.y}, {drop_item.z}, {self.floor_name(drop_item.z)}.",
+            f"Dropped {drop_item.title} at {drop_item.x}, {drop_item.y}, {drop_item.z}, {floor_name(drop_item.z)}.",
             drop_item.id,
         )
         return
@@ -462,7 +446,7 @@ class ItemRuntime:
             )
             return
         if delete_item.type == "elevator" and (
-            str(delete_item.params.get("state", "idle")) == "moving"
+            ElevatorCar(delete_item).phase == "moving"
             or any(
                 other.elevator_id == delete_item.id for other in self.clients.values()
             )
@@ -1118,7 +1102,7 @@ class ItemRuntime:
             elevator = (
                 self.items.get(client.elevator_id) if client.elevator_id else None
             )
-            if elevator is not None and elevator.params.get("state") == "moving":
+            if elevator is not None and ElevatorCar(elevator).phase == "moving":
                 continue
             if client.z != item.z:
                 continue

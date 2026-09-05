@@ -1780,6 +1780,7 @@ const onAppMessage = createOnMessageHandler({
   setWorldFloors: (floors) => {
     worldFloors = new Map(floors.map((floor) => [floor.z, floor.name]));
   },
+  setElevatorDoorClips: (clips) => acousticZoneRuntime.setDoorClips(clips),
   setStructurePresets: (presets: StructurePreset[]) => worldBuilderController.setPresets(presets),
   refreshStructureGeometry: () => {
     wallEdgeIndex = buildWallEdgeIndex(state.structures.values());

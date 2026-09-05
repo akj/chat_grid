@@ -27,6 +27,16 @@ function elevator(state: string, currentZ = 0): WorldItem {
 }
 
 describe('AcousticZoneRuntime', () => {
+  it.each([['opening', 1], ['arriving', 1], ['closing', 0]] as const)(
+    'uses zero-length clips before welcome during %s', (phase, transmission) => {
+      const runtime = new AcousticZoneRuntime();
+      const item = elevator(phase);
+      runtime.sync([item], 0);
+      expect(runtime.doorTransmission(item, 0)).toBe(transmission);
+      expect(runtime.doorTransmission(item, 1000)).toBe(transmission);
+    },
+  );
+
   it('keeps floors isolated while cabin occupants hear one another', () => {
     const runtime = new AcousticZoneRuntime();
     const items = new Map([['car-1', elevator('moving', 0)]]);
@@ -38,6 +48,7 @@ describe('AcousticZoneRuntime', () => {
 
   it('ramps transmission in while opening and out while closing', () => {
     const runtime = new AcousticZoneRuntime();
+    runtime.setDoorClips({ openSeconds: 2.563107, closeSeconds: 3.765601 });
     const opening = elevator('opening');
     const items = new Map([['car-1', opening]]);
     runtime.sync(items.values(), 0);

@@ -1,10 +1,8 @@
 import { isItemOnFloor, type WorldItem } from '../state/gameState';
-
-const ELEVATOR_OPEN_SECONDS = 2.563107;
-const ELEVATOR_CLOSE_SECONDS = 3.765601;
+import { ElevatorCar, type ElevatorDoorClips, type ElevatorPhase } from '../items/types/elevator/car';
 
 type Transition = {
-  state: string;
+  phase: ElevatorPhase;
   startedAtMs: number;
 };
 
@@ -27,8 +25,8 @@ export function worldItemAcousticZoneId(
   const listenerFloor = parseFloorZone(listenerZoneId);
   const listenerElevatorId = parseElevatorZone(listenerZoneId);
   const elevator = listenerElevatorId ? items.get(listenerElevatorId) : null;
-  const connectedFloor = listenerFloor
-    ?? (elevator?.type === 'elevator' ? Number(elevator.params.currentZ) : null);
+  const car = elevator ? ElevatorCar.from(elevator) : null;
+  const connectedFloor = listenerFloor ?? car?.landing ?? null;
   if (connectedFloor !== null && Number.isInteger(connectedFloor) && isItemOnFloor(item, connectedFloor)) {
     return floorAcousticZoneId(connectedFloor);
   }
@@ -48,16 +46,22 @@ function parseElevatorZone(zoneId: string): string | null {
 /** Tracks local door progress and resolves transmission between acoustic zones. */
 export class AcousticZoneRuntime {
   private readonly transitions = new Map<string, Transition>();
+  private doorClips: ElevatorDoorClips = { openSeconds: 0, closeSeconds: 0 };
+
+  setDoorClips(clips: ElevatorDoorClips): void {
+    this.doorClips = clips;
+  }
 
   sync(items: Iterable<WorldItem>, nowMs = performance.now()): void {
     const validIds = new Set<string>();
     for (const item of items) {
-      if (item.type !== 'elevator') continue;
+      const car = ElevatorCar.from(item);
+      if (!car) continue;
       validIds.add(item.id);
-      const state = String(item.params.state ?? 'idle');
+      const phase = car.phase;
       const previous = this.transitions.get(item.id);
-      if (!previous || previous.state !== state) {
-        this.transitions.set(item.id, { state, startedAtMs: nowMs });
+      if (!previous || previous.phase !== phase) {
+        this.transitions.set(item.id, { phase, startedAtMs: nowMs });
       }
     }
     for (const itemId of this.transitions.keys()) {
@@ -66,17 +70,11 @@ export class AcousticZoneRuntime {
   }
 
   doorTransmission(item: WorldItem, nowMs = performance.now()): number {
-    const state = String(item.params.state ?? 'idle');
-    if (state === 'door_open') return 1;
+    const car = ElevatorCar.from(item);
+    if (!car) return 0;
     const transition = this.transitions.get(item.id);
     const elapsedSeconds = Math.max(0, (nowMs - (transition?.startedAtMs ?? nowMs)) / 1000);
-    if (state === 'opening' || state === 'arriving') {
-      return Math.min(1, elapsedSeconds / ELEVATOR_OPEN_SECONDS);
-    }
-    if (state === 'closing') {
-      return Math.max(0, 1 - elapsedSeconds / ELEVATOR_CLOSE_SECONDS);
-    }
-    return 0;
+    return car.doorTransmission(elapsedSeconds, this.doorClips);
   }
 
   transmission(
@@ -88,7 +86,7 @@ export class AcousticZoneRuntime {
     if (listenerZoneId === sourceZoneId) return 1;
     const elevator = this.connectedElevator(listenerZoneId, sourceZoneId, items);
     if (!elevator) return 0;
-    return this.doorTransmission(elevator, nowMs);
+    return this.doorTransmission(elevator.item, nowMs);
   }
 
   /** Return whether a one-shot can transmit now or during the active door transition. */
@@ -100,29 +98,27 @@ export class AcousticZoneRuntime {
     if (listenerZoneId === sourceZoneId) return true;
     const elevator = this.connectedElevator(listenerZoneId, sourceZoneId, items);
     if (!elevator) return false;
-    return ['opening', 'arriving', 'door_open', 'closing'].includes(
-      String(elevator.params.state ?? 'idle'),
-    );
+    return elevator.doorPassesSound;
   }
 
   couldConnect(listenerZoneId: string, sourceZoneId: string, items: Map<string, WorldItem>): boolean {
     if (listenerZoneId === sourceZoneId) return true;
     const elevator = this.connectedElevator(listenerZoneId, sourceZoneId, items);
-    return !!elevator && String(elevator.params.state ?? 'idle') !== 'moving';
+    return !!elevator && !elevator.isMoving;
   }
 
   private connectedElevator(
     listenerZoneId: string,
     sourceZoneId: string,
     items: Map<string, WorldItem>,
-  ): WorldItem | null {
+  ): ElevatorCar | null {
     const listenerFloor = parseFloorZone(listenerZoneId);
     const sourceFloor = parseFloorZone(sourceZoneId);
     const elevatorId = parseElevatorZone(listenerZoneId) ?? parseElevatorZone(sourceZoneId);
     const floorZ = listenerFloor ?? sourceFloor;
     if (!elevatorId || floorZ === null) return null;
     const elevator = items.get(elevatorId);
-    if (!elevator || elevator.type !== 'elevator' || Number(elevator.params.currentZ) !== floorZ) return null;
-    return elevator;
+    const car = elevator ? ElevatorCar.from(elevator) : null;
+    return car?.isAtLanding(floorZ) ? car : null;
   }
 }

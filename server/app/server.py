@@ -36,6 +36,7 @@ from .acoustic_zones import (
 from .client import ClientConnection
 from .config import load_config
 from .delivery import Delivery, Transport, WebsocketTransport
+from .floors import FLOOR_DEFINITIONS, is_floor
 from .item_catalog import (
     ITEM_TYPE_EDITABLE_PROPERTIES,
     ITEM_TYPE_LABELS,
@@ -47,6 +48,7 @@ from .item_catalog import (
 )
 from .item_runtime import ItemRuntime
 from .item_service import ItemService
+from .items.types.elevator.car import DOOR_CLOSE_CLIP_SECONDS, DOOR_OPEN_CLIP_SECONDS
 from .models import (
     AuthLoginPacket,
     AuthLogoutPacket,
@@ -128,11 +130,6 @@ RADIO_METADATA_POLL_INTERVAL_S = 10.0
 RADIO_METADATA_TIMEOUT_S = 6.0
 RADIO_METADATA_MAX_CONCURRENCY = 4
 CLOCK_ANNOUNCE_POLL_INTERVAL_S = 1.0
-FLOOR_DEFINITIONS: tuple[dict[str, str | int], ...] = (
-    {"id": "ground", "name": "Ground floor", "z": 0},
-    {"id": "second", "name": "Second floor", "z": 40},
-)
-FLOOR_ELEVATIONS = frozenset(int(floor["z"]) for floor in FLOOR_DEFINITIONS)
 AUTH_SESSION_COOKIE_NAME = "chgrid_session_token"
 AUTH_SESSION_COOKIE_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
 AUTH_SESSION_COOKIE_SET_PATH = "auth/session/set"
@@ -829,21 +826,6 @@ class SignalingServer:
 
         return 0 <= x < self.grid_size and 0 <= y < self.grid_size
 
-    @staticmethod
-    def _is_supported_floor(z: int) -> bool:
-        """Return whether a height is a configured floor elevation."""
-
-        return z in FLOOR_ELEVATIONS
-
-    @staticmethod
-    def _floor_name(z: int) -> str:
-        """Return the configured user-facing floor name for an elevation."""
-
-        for floor in FLOOR_DEFINITIONS:
-            if int(floor["z"]) == z:
-                return str(floor["name"])
-        return f"z {z}"
-
     def _movement_window_index(self, now_ms: int) -> int:
         """Return current movement rate-limit window index for a server timestamp."""
 
@@ -1010,6 +992,10 @@ class SignalingServer:
                 "movementTickMs": self.movement_tick_ms,
                 "movementMaxStepsPerTick": self.movement_max_steps_per_tick,
                 "floors": [dict(floor) for floor in FLOOR_DEFINITIONS],
+                "elevatorDoorClipSeconds": {
+                    "open": DOOR_OPEN_CLIP_SECONDS,
+                    "close": DOOR_CLOSE_CLIP_SECONDS,
+                },
                 "structurePresets": self.structure_service.preset_snapshot(),
             },
             uiDefinitions=self._build_ui_definitions(client),
@@ -1052,7 +1038,7 @@ class SignalingServer:
             and isinstance(saved_y, int)
             and isinstance(saved_z, int)
             and self._is_in_bounds(saved_x, saved_y)
-            and self._is_supported_floor(saved_z)
+            and is_floor(saved_z)
         ):
             client.x = saved_x
             client.y = saved_y

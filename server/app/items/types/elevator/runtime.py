@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
-from math import isfinite
-from typing import Literal
+from typing import Literal, Protocol
+
+from websockets.asyncio.server import ServerConnection
 
 from ....acoustic_zones import (
     client_position_packet,
@@ -14,48 +13,59 @@ from ....acoustic_zones import (
 )
 from ....client import ClientConnection
 from ....delivery import Delivery
+from ....floors import floor_name
+from ....item_service import ItemService
 from ....models import (
     ItemElevatorStatusPacket,
     ItemUseSoundPacket,
     WorldItem,
 )
 
-ELEVATOR_DOOR_OPEN_SECONDS = 5.0
-ELEVATOR_DOOR_OPEN_SOUND_SECONDS = 2.563107
-ELEVATOR_DOOR_CLOSE_SOUND_SECONDS = 3.765601
-ELEVATOR_TRAVEL_SECONDS = 5.0
+from .car import ElevatorCar
+
 ELEVATOR_TRAVEL_UPDATE_SECONDS = 0.25
 
-ItemResultCallback = Callable[
-    [ClientConnection, bool, Literal["use"], str, str | None], Awaitable[None]
-]
 
+class ElevatorRuntimeHost(Protocol):
+    """Server operations required by the elevator runtime."""
 
-@dataclass(frozen=True)
-class ElevatorRuntimeCallbacks:
-    """Server orchestration hooks required by the elevator runtime."""
-
-    get_item: Callable[[str], WorldItem | None]
-    iter_clients: Callable[[], Iterable[ClientConnection]]
     delivery: Delivery
-    broadcast_item: Callable[[WorldItem], Awaitable[None]]
-    send_item_result: ItemResultCallback
-    request_state_save: Callable[[], None]
-    persist_client_position: Callable[[ClientConnection], None]
-    find_carried_item: Callable[[str], WorldItem | None]
-    now_ms: Callable[[], int]
-    floor_name: Callable[[int], str]
-    get_emit_range: Callable[[WorldItem], int]
+
+    @property
+    def items(self) -> dict[str, WorldItem]: ...
+
+    @property
+    def clients(self) -> dict[ServerConnection, ClientConnection]: ...
+
+    @property
+    def item_service(self) -> ItemService: ...
+
+    async def broadcast_item(self, item: WorldItem) -> None: ...
+
+    async def send_result(
+        self,
+        client: ClientConnection,
+        ok: bool,
+        action: Literal["use"],
+        message: str,
+        item_id: str | None = None,
+    ) -> None: ...
+
+    def request_state_save(self) -> None: ...
+
+    def get_emit_range(self, item: WorldItem) -> int: ...
+
+    def persist_client_position(self, client: ClientConnection) -> None: ...
 
 
 class ElevatorRuntime:
     """Own independent elevator tasks and all server-authoritative car behavior."""
 
-    def __init__(self, callbacks: ElevatorRuntimeCallbacks) -> None:
-        """Create an elevator runtime using generic server delivery callbacks."""
+    def __init__(self, host: ElevatorRuntimeHost) -> None:
+        """Create an elevator runtime using authoritative item state."""
 
-        self.callbacks = callbacks
-        self.delivery = callbacks.delivery
+        self.host = host
+        self.delivery = host.delivery
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     async def shutdown(self) -> None:
@@ -82,28 +92,25 @@ class ElevatorRuntime:
 
         if not client.elevator_id:
             return
-        item = self.callbacks.get_item(client.elevator_id)
+        item = self.host.items.get(client.elevator_id)
         if item is not None and item.type == "elevator":
             client.x = item.x
             client.y = item.y
-            client.z = int(item.params.get("currentZ", 0))
+            client.z = ElevatorCar(item).landing
         client.elevator_id = None
 
     async def use(self, client: ClientConnection, item: WorldItem) -> None:
         """Apply one context-sensitive elevator call, enter, open, or exit action."""
 
-        state = str(item.params.get("state", "idle"))
-        current_z = int(item.params.get("currentZ", 0))
+        car = ElevatorCar(item)
+        phase = car.phase
+        current_z = car.landing
         if client.elevator_id == item.id:
-            if state in {"moving", "arriving"}:
-                await self._send_result(client, "The elevator is moving.", item.id)
+            block_reason = car.door_block_reason()
+            if block_reason is not None:
+                await self._send_result(client, block_reason, item.id)
                 return
-            if state in {"opening", "closing"}:
-                await self._send_result(
-                    client, f"The elevator door is {state}.", item.id
-                )
-                return
-            if not bool(item.params.get("doorOpen", False)):
+            if not car.door_open:
                 await self._begin_opening(item, current_z)
                 await self._send_result(
                     client, "The elevator door is opening.", item.id
@@ -122,49 +129,47 @@ class ElevatorRuntime:
             )
             await self._send_result(
                 client,
-                f"You exit {item.title} on {self.callbacks.floor_name(current_z)}.",
+                f"You exit {item.title} on {floor_name(current_z)}.",
                 item.id,
             )
             return
 
-        if state in {"moving", "arriving"}:
-            item.params["queuedZ"] = client.z
+        if phase in {"moving", "arriving"}:
+            car.queue_call(client.z)
             self._touch(item)
-            await self.callbacks.broadcast_item(item)
+            await self.host.broadcast_item(item)
             await self._send_result(client, f"You call {item.title}.", item.id)
             return
 
-        if state in {"opening", "closing"}:
+        if phase in {"opening", "closing"}:
             if client.z != current_z:
-                item.params["queuedZ"] = client.z
+                car.queue_call(client.z)
                 self._touch(item)
-                await self.callbacks.broadcast_item(item)
+                await self.host.broadcast_item(item)
                 await self._send_result(client, f"You call {item.title}.", item.id)
                 return
-            await self._send_result(client, f"The elevator door is {state}.", item.id)
+            await self._send_result(client, f"The elevator door is {phase}.", item.id)
             return
 
         if current_z != client.z:
-            item.params["targetZ"] = client.z
-            item.params["state"] = "moving"
-            item.params["doorOpen"] = False
+            car.call_to(client.z)
             self._touch(item)
-            await self.callbacks.broadcast_item(item)
+            await self.host.broadcast_item(item)
             self._restart_task(item.id)
             await self._send_result(client, f"You call {item.title}.", item.id)
             return
 
-        if not bool(item.params.get("doorOpen", False)):
+        if not car.door_open:
             await self._begin_opening(item, current_z)
             await self._send_result(client, "The elevator door is opening.", item.id)
             return
 
         client.elevator_id = item.id
         await self.delivery.broadcast(client_position_packet(client))
-        destination_z = next(z for z in self._floor_elevations(item) if z != current_z)
-        item.params["departOnCloseZ"] = destination_z
+        destination_z = car.other_floor(current_z)
+        car.board(destination_z)
         self._touch(item)
-        await self.callbacks.broadcast_item(item)
+        await self.host.broadcast_item(item)
         self._restart_task(item.id)
         await self.delivery.send(
             client,
@@ -175,9 +180,7 @@ class ElevatorRuntime:
                 z=current_z,
             ),
         )
-        door_open_seconds = self._duration_seconds(
-            item, "doorOpenSeconds", ELEVATOR_DOOR_OPEN_SECONDS
-        )
+        door_open_seconds = car.door_open_seconds
         seconds_label = f"{door_open_seconds:g} second"
         if door_open_seconds != 1:
             seconds_label += "s"
@@ -192,68 +195,46 @@ class ElevatorRuntime:
 
         try:
             while True:
-                item = self.callbacks.get_item(item_id)
+                item = self.host.items.get(item_id)
                 if item is None or item.type != "elevator":
                     return
-                state = str(item.params.get("state", "idle"))
-                if state == "moving":
-                    origin_z = int(item.params.get("currentZ", 0))
-                    target_z = int(item.params.get("targetZ", origin_z))
-                    await self.advance_travel(item, origin_z, target_z)
-                    item.params["currentZ"] = target_z
-                    item.params["targetZ"] = None
-                    item.params["state"] = "arriving"
-                    item.params["doorOpen"] = False
-                    self._touch(item)
-                    await self.callbacks.broadcast_item(item)
-                    await self.broadcast_direction_sound(item, target_z)
-                    await self._broadcast_sound(
-                        item, target_z, "/sounds/elevator_open.ogg"
+                car = ElevatorCar(item)
+                phase = car.phase
+                if phase == "idle":
+                    return
+                if phase == "moving":
+                    await self.advance_travel(
+                        item,
+                        car.landing,
+                        car.target if car.target is not None else car.landing,
                     )
-                    continue
-                if state in {"opening", "arriving"}:
-                    await asyncio.sleep(ELEVATOR_DOOR_OPEN_SOUND_SECONDS)
-                    current_z = int(item.params.get("currentZ", 0))
-                    item.params["state"] = "door_open"
-                    item.params["doorOpen"] = True
-                    self._touch(item)
-                    if state == "arriving":
-                        await self._move_occupants(item, current_z)
-                    await self.callbacks.broadcast_item(item)
-                    continue
-                if state == "door_open":
-                    await asyncio.sleep(
-                        self._duration_seconds(
-                            item, "doorOpenSeconds", ELEVATOR_DOOR_OPEN_SECONDS
-                        )
-                    )
-                    current_z = int(item.params.get("currentZ", 0))
-                    item.params["state"] = "closing"
-                    item.params["doorOpen"] = False
-                    self._touch(item)
-                    await self.callbacks.broadcast_item(item)
-                    await self._broadcast_sound(
-                        item, current_z, "/sounds/elevator_close.ogg"
-                    )
-                    continue
-                if state == "closing":
-                    await asyncio.sleep(ELEVATOR_DOOR_CLOSE_SOUND_SECONDS)
-                    current_z = int(item.params.get("currentZ", 0))
-                    next_z = self._next_destination(item, current_z)
-                    item.params["departOnCloseZ"] = None
-                    item.params["queuedZ"] = None
-                    if next_z is None:
-                        item.params["state"] = "idle"
-                        item.params["targetZ"] = None
-                    else:
-                        item.params["state"] = "moving"
-                        item.params["targetZ"] = next_z
-                    self._touch(item)
-                    await self.callbacks.broadcast_item(item)
-                    if next_z is None:
+                else:
+                    seconds = car.phase_seconds()
+                    if seconds is None:
                         return
-                    continue
-                return
+                    await asyncio.sleep(seconds)
+                step = car.advance()
+                self._touch(item)
+                if step == "arrived":
+                    await self.host.broadcast_item(item)
+                    await self.broadcast_direction_sound(item, car.landing)
+                    await self._broadcast_sound(
+                        item, car.landing, "/sounds/elevator_open.ogg"
+                    )
+                elif step == "door_opened":
+                    if phase == "arriving":
+                        await self._move_occupants(item, car.landing)
+                    await self.host.broadcast_item(item)
+                elif step == "door_closed":
+                    await self.host.broadcast_item(item)
+                    await self._broadcast_sound(
+                        item, car.landing, "/sounds/elevator_close.ogg"
+                    )
+                elif step == "departed":
+                    await self.host.broadcast_item(item)
+                elif step == "settled":
+                    await self.host.broadcast_item(item)
+                    return
         except asyncio.CancelledError:
             return
         finally:
@@ -266,9 +247,7 @@ class ElevatorRuntime:
     ) -> None:
         """Publish progressive rider heights over the elevator travel interval."""
 
-        travel_seconds = self._duration_seconds(
-            item, "travelSeconds", ELEVATOR_TRAVEL_SECONDS
-        )
+        travel_seconds = ElevatorCar(item).travel_seconds
         distance = destination_z - origin_z
         if distance == 0:
             await asyncio.sleep(travel_seconds)
@@ -297,7 +276,7 @@ class ElevatorRuntime:
     async def broadcast_direction_sound(self, item: WorldItem, current_z: int) -> None:
         """Announce the elevator's next travel direction after its door opens."""
 
-        next_z = next(z for z in self._floor_elevations(item) if z != current_z)
+        next_z = ElevatorCar(item).other_floor(current_z)
         sound = (
             "/sounds/elevator_up.ogg"
             if next_z > current_z
@@ -308,10 +287,9 @@ class ElevatorRuntime:
     async def _begin_opening(self, item: WorldItem, current_z: int) -> None:
         """Enter the non-traversable opening phase and start its sound."""
 
-        item.params["state"] = "opening"
-        item.params["doorOpen"] = False
+        ElevatorCar(item).begin_opening()
         self._touch(item)
-        await self.callbacks.broadcast_item(item)
+        await self.host.broadcast_item(item)
         await self.broadcast_direction_sound(item, current_z)
         await self._broadcast_sound(item, current_z, "/sounds/elevator_open.ogg")
         self._restart_task(item.id)
@@ -319,14 +297,14 @@ class ElevatorRuntime:
     async def _move_occupants(self, item: WorldItem, destination_z: int) -> None:
         """Move elevator riders and carried items once the arrival door is open."""
 
-        for rider in tuple(self.callbacks.iter_clients()):
+        for rider in tuple(self.host.clients.values()):
             if rider.elevator_id != item.id:
                 continue
             rider.x = item.x
             rider.y = item.y
             rider.z = destination_z
-            rider.last_position_update_ms = self.callbacks.now_ms()
-            self.callbacks.persist_client_position(rider)
+            rider.last_position_update_ms = self.host.item_service.now_ms()
+            self.host.persist_client_position(rider)
             await self.delivery.broadcast(client_position_packet(rider))
             await self.delivery.send(
                 rider,
@@ -337,19 +315,19 @@ class ElevatorRuntime:
                     z=destination_z,
                     message=(
                         f"{item.title} arrives on "
-                        f"{self.callbacks.floor_name(destination_z)}. The door opens."
+                        f"{floor_name(destination_z)}. The door opens."
                     ),
                 ),
             )
-            carried = self.callbacks.find_carried_item(rider.id)
+            carried = self.host.item_service.find_carried_item(rider.id)
             if carried is not None:
                 carried.x = rider.x
                 carried.y = rider.y
                 carried.z = rider.z
-                carried.updatedAt = self.callbacks.now_ms()
+                carried.updatedAt = self.host.item_service.now_ms()
                 carried.updatedBy = rider.user_id or rider.id
                 carried.updatedByName = rider.username or rider.nickname
-                await self.callbacks.broadcast_item(carried)
+                await self.host.broadcast_item(carried)
 
     async def _broadcast_sound(
         self, item: WorldItem, current_z: int, sound: str
@@ -364,25 +342,25 @@ class ElevatorRuntime:
             y=item.y,
             z=current_z,
             acousticZoneId=floor_acoustic_zone_id(current_z),
-            range=self.callbacks.get_emit_range(item),
+            range=self.host.get_emit_range(item),
         )
         await self.delivery.broadcast(packet)
 
     async def _broadcast_travel_position(self, item: WorldItem, travel_z: int) -> None:
         """Move riders to one intermediate elevator height."""
 
-        for rider in tuple(self.callbacks.iter_clients()):
+        for rider in tuple(self.host.clients.values()):
             if rider.elevator_id != item.id:
                 continue
             rider.x = item.x
             rider.y = item.y
             rider.z = travel_z
-            carried = self.callbacks.find_carried_item(rider.id)
+            carried = self.host.item_service.find_carried_item(rider.id)
             if carried is not None:
                 carried.x = rider.x
                 carried.y = rider.y
                 carried.z = rider.z
-                await self.callbacks.broadcast_item(carried)
+                await self.host.broadcast_item(carried)
             await self.delivery.broadcast(client_position_packet(rider))
             await self.delivery.send(
                 rider,
@@ -397,11 +375,11 @@ class ElevatorRuntime:
     def _touch(self, item: WorldItem) -> None:
         """Mark elevator state changed and schedule persistence."""
 
-        item.updatedAt = self.callbacks.now_ms()
+        item.updatedAt = self.host.item_service.now_ms()
         item.updatedBy = "system"
         item.updatedByName = "system"
         item.version += 1
-        self.callbacks.request_state_save()
+        self.host.request_state_save()
 
     def _restart_task(self, item_id: str) -> None:
         """Restart the timer/state-machine task for one elevator."""
@@ -416,35 +394,4 @@ class ElevatorRuntime:
     ) -> None:
         """Send a successful elevator-use result through the server callback."""
 
-        await self.callbacks.send_item_result(client, True, "use", message, item_id)
-
-    @staticmethod
-    def _floor_elevations(item: WorldItem) -> list[int]:
-        """Return this elevator's configured floors in ascending order."""
-
-        floors = item.params.get("floorZs", [0, 40])
-        return sorted(int(z) for z in floors if isinstance(z, int))
-
-    @staticmethod
-    def _next_destination(item: WorldItem, current_z: int) -> int | None:
-        """Resolve the pending departure or queued landing after closing."""
-
-        depart_z = item.params.get("departOnCloseZ")
-        queued_z = item.params.get("queuedZ")
-        if isinstance(depart_z, int) and depart_z != current_z:
-            return depart_z
-        if isinstance(queued_z, int) and queued_z != current_z:
-            return queued_z
-        return None
-
-    @staticmethod
-    def _duration_seconds(item: WorldItem, key: str, default: float) -> float:
-        """Read one validated duration with a safe default for older items."""
-
-        try:
-            value = float(item.params.get(key, default))
-        except (TypeError, ValueError):
-            return default
-        if not isfinite(value):
-            return default
-        return max(0, min(300, value))
+        await self.host.send_result(client, True, "use", message, item_id)

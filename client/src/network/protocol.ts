@@ -83,6 +83,7 @@ export const welcomeMessageSchema = z.object({
   worldConfig: z
     .object({
       gridSize: z.number().int().positive(),
+      elevatorDoorClipSeconds: z.object({ open: z.number().positive(), close: z.number().positive() }),
       movementTickMs: z.number().int().positive().optional(),
       movementMaxStepsPerTick: z.number().int().positive().optional(),
       floors: z.array(

@@ -124,6 +124,7 @@ This is a behavior guide for packet semantics beyond raw schemas.
 - `welcome.worldConfig.movementTickMs`: server movement-rate window used for client movement pacing.
 - `welcome.worldConfig.movementMaxStepsPerTick`: max allowed grid steps per movement window.
 - `welcome.worldConfig.floors`: server-owned floor ids, display names, and exact `z` elevations.
+- `welcome.worldConfig.elevatorDoorClipSeconds`: server-owned open/close clip lengths in seconds used by the client for the door transmission ramp.
 - `welcome.worldConfig.structurePresets`: server-configured wall defaults exposed to World Builder.
 - `welcome.structures`: canonical wall-run snapshot stored separately from items.
 - `welcome.player`: server-assigned spawn/current self position at connect time.

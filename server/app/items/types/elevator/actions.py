@@ -6,6 +6,7 @@ from typing import Callable
 
 from ....item_types import ItemUseResult
 from ....models import WorldItem
+from .car import ElevatorCar
 
 
 def use_item(
@@ -19,41 +20,9 @@ def use_item(
     )
 
 
-def _floor_name(item: WorldItem, z: int) -> str:
-    """Return the simple two-floor name for one configured elevation."""
-
-    floors = sorted(
-        int(floor_z)
-        for floor_z in item.params.get("floorZs", [0, 40])
-        if isinstance(floor_z, int)
-    )
-    if floors and z == floors[0]:
-        return "Ground floor"
-    if len(floors) > 1 and z == floors[1]:
-        return "Second floor"
-    return f"height {z}"
-
-
 def secondary_use_item(
     item: WorldItem, _nickname: str, _clock_formatter: Callable[[dict], str]
 ) -> ItemUseResult:
     """Report the elevator car's landing or travel state."""
 
-    current_z = int(item.params.get("currentZ", 0))
-    state = item.params.get("state")
-    if state == "moving":
-        target_z = int(item.params.get("targetZ", current_z))
-        direction = "up" if target_z > current_z else "down"
-        message = (
-            f"{item.title} is headed to {_floor_name(item, target_z)}, "
-            f"traveling {direction}."
-        )
-    elif state in {"opening", "arriving", "closing"}:
-        door_state = "opening" if state == "arriving" else state
-        message = (
-            f"{item.title} is on {_floor_name(item, current_z)}, door {door_state}."
-        )
-    else:
-        door = "open" if item.params.get("doorOpen") is True else "closed"
-        message = f"{item.title} is on {_floor_name(item, current_z)}, door {door}."
-    return ItemUseResult(self_message=message, others_message="")
+    return ItemUseResult(self_message=ElevatorCar(item).describe(), others_message="")

@@ -2,6 +2,7 @@ import { HEARING_RADIUS, type WorldItem } from '../../../state/gameState';
 import { AudioEngine } from '../../../audio/audioEngine';
 import { applySpatialMixToNodes, resolveSpatialMix } from '../../../audio/spatial';
 import { applyAcousticLowpass, normalizeAcousticMix, type AcousticMix } from '../../../audio/acoustics';
+import { ElevatorCar } from './car';
 
 type ElevatorOutput = {
   element: HTMLAudioElement;
@@ -39,11 +40,10 @@ export function shouldPlayElevatorAmbience(
   occupiedElevatorId: string | null,
   range: number,
 ): boolean {
-  if (item.type !== 'elevator') return false;
+  const car = ElevatorCar.from(item);
+  if (!car) return false;
   if (occupiedElevatorId === item.id) return true;
-  const state = String(item.params.state ?? 'idle');
-  if (!['opening', 'arriving', 'door_open', 'closing'].includes(state)
-    || Number(item.params.currentZ) !== listenerPosition.z) return false;
+  if (!car.doorPassesSound || !car.isAtLanding(listenerPosition.z)) return false;
   return Math.hypot(item.x - listenerPosition.x, item.y - listenerPosition.y)
     <= Math.max(1, range || HEARING_RADIUS) + SUBSCRIBE_PRELOAD_SQUARES;
 }
@@ -194,8 +194,7 @@ export class ElevatorAudioRuntime {
         continue;
       }
       const inside = occupiedElevatorId === item.id;
-      const currentZ = Number(item.params.currentZ);
-      const sameLanding = Number.isFinite(currentZ) && currentZ === playerPosition.z;
+      const sameLanding = ElevatorCar.from(item)?.isAtLanding(playerPosition.z) ?? false;
       const spatialConfig = this.getSpatialConfig(item);
       const mix = inside
         ? resolveSpatialMix({ dx: 0, dy: 0, range: 1, nearFieldDistance: 1, nearFieldCenterPan: true })

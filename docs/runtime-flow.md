@@ -22,6 +22,7 @@
 10. Client:
    - applies `welcome.worldConfig.gridSize` for authoritative grid bounds/rendering
    - applies `welcome.worldConfig.floors` for floor names and elevations
+   - applies `welcome.worldConfig.elevatorDoorClipSeconds` for the door transmission ramp
    - applies `welcome.worldConfig.movementTickMs` as movement pacing guidance
    - applies `welcome.worldConfig.movementMaxStepsPerTick` for movement-rate parity
    - applies `welcome.worldConfig.structurePresets` and the canonical wall snapshot for World Builder, rendering, and collision prediction

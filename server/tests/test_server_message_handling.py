@@ -154,6 +154,12 @@ async def test_welcome_includes_livekit_token_when_configured(
     token_packet = transport.last_packet_of_type(client, LiveKitTokenPacket)
     assert token_packet.url == "wss://livekit.example.test"
     assert token_packet.token
+    welcome = transport.last_packet_of_type(client, WelcomePacket)
+    assert welcome.worldConfig is not None
+    assert welcome.worldConfig["elevatorDoorClipSeconds"] == {
+        "open": 2.563107,
+        "close": 3.765601,
+    }
 
 
 @pytest.mark.asyncio

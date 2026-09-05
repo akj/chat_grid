@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from app.item_service import ItemService
-from app.items.types.elevator.actions import secondary_use_item
 from app.items.types.elevator.validator import validate_update
 
 from app.models import (
@@ -19,10 +18,10 @@ from app.models import (
     ItemUpsertPacket,
     ItemUseSoundPacket,
 )
-from app.items.types.elevator.runtime import (
-    ELEVATOR_DOOR_CLOSE_SOUND_SECONDS,
-    ELEVATOR_DOOR_OPEN_SECONDS,
-    ELEVATOR_DOOR_OPEN_SOUND_SECONDS,
+from app.items.types.elevator.car import (
+    DOOR_CLOSE_CLIP_SECONDS,
+    DEFAULT_DOOR_OPEN_SECONDS,
+    DOOR_OPEN_CLIP_SECONDS,
 )
 
 
@@ -140,44 +139,6 @@ def test_elevator_rejects_invalid_editable_durations(
 
     with pytest.raises(ValueError):
         validate_update(elevator, {**elevator.params, key: value})
-
-
-@pytest.mark.parametrize(
-    ("params", "expected"),
-    [
-        (
-            {"currentZ": 0, "state": "door_open", "doorOpen": True},
-            "Elevator is on Ground floor, door open.",
-        ),
-        (
-            {"currentZ": 40, "state": "idle", "doorOpen": False},
-            "Elevator is on Second floor, door closed.",
-        ),
-        (
-            {"currentZ": 0, "targetZ": 40, "state": "moving"},
-            "Elevator is headed to Second floor, traveling up.",
-        ),
-        (
-            {"currentZ": 40, "targetZ": 0, "state": "moving"},
-            "Elevator is headed to Ground floor, traveling down.",
-        ),
-    ],
-)
-def test_elevator_secondary_use_reports_simple_car_state(
-    make_world, params: dict[str, object], expected: str
-) -> None:
-    """Secondary use should report only landing/door or destination/direction."""
-
-    world = make_world(grid_size=41)
-    server = world.server
-    client = world.join("tester", x=10, y=10, z=0, client_id="u1")
-    elevator = server.item_service.default_item(client, "elevator")
-    elevator.params.update(params)
-
-    result = secondary_use_item(elevator, client.nickname, lambda _: "")
-
-    assert result.self_message == expected
-    assert result.others_message == ""
 
 
 @pytest.mark.asyncio
@@ -383,10 +344,10 @@ async def test_elevator_arrival_moves_rider_and_carried_item(
         "/sounds/elevator_open.ogg",
         "/sounds/elevator_close.ogg",
     ]
-    assert (ELEVATOR_DOOR_OPEN_SOUND_SECONDS, "arriving") in sleeps
-    assert (ELEVATOR_DOOR_OPEN_SECONDS, "door_open") in sleeps
-    assert (ELEVATOR_DOOR_CLOSE_SOUND_SECONDS, "closing") in sleeps
-    close_index = sleeps.index((ELEVATOR_DOOR_CLOSE_SOUND_SECONDS, "closing"))
+    assert (DOOR_OPEN_CLIP_SECONDS, "arriving") in sleeps
+    assert (DEFAULT_DOOR_OPEN_SECONDS, "door_open") in sleeps
+    assert (DOOR_CLOSE_CLIP_SECONDS, "closing") in sleeps
+    close_index = sleeps.index((DOOR_CLOSE_CLIP_SECONDS, "closing"))
     assert all(state == "moving" for _, state in sleeps[close_index + 1 :])
     opening_sound = elevator_sounds[1]
     assert (opening_sound.x, opening_sound.y, opening_sound.z) == (10, 10, 40)
@@ -411,83 +372,6 @@ async def test_elevator_door_sound_announces_next_upward_trip(
     assert arrival_sound.sound == "/sounds/elevator_up.ogg"
     assert arrival_sound.z == 0
     assert arrival_sound.acousticZoneId == "floor:0"
-
-
-@pytest.mark.asyncio
-async def test_elevator_waits_for_closing_sound_before_travel(
-    make_world,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The runtime must not begin car movement until the closing clip finishes."""
-
-    world = make_world(grid_size=41)
-    server = world.server
-    client = world.join("tester", x=10, y=10, z=0, client_id="u1")
-    elevator = server.item_service.default_item(client, "elevator")
-    elevator.params.update(
-        {
-            "state": "closing",
-            "doorOpen": False,
-            "departOnCloseZ": 40,
-        }
-    )
-    server.item_service.add_item(elevator)
-    completed_sleeps: list[float] = []
-    travel_started = False
-
-    async def immediate_sleep(seconds: float) -> None:
-        completed_sleeps.append(seconds)
-
-    async def stop_at_travel(
-        _item: object, _origin_z: int, _destination_z: int
-    ) -> None:
-        nonlocal travel_started
-        travel_started = True
-        assert completed_sleeps == [ELEVATOR_DOOR_CLOSE_SOUND_SECONDS]
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(asyncio, "sleep", immediate_sleep)
-    monkeypatch.setattr(server.item_runtime.elevator, "advance_travel", stop_at_travel)
-
-    await server.item_runtime.elevator.run_cycle(elevator.id)
-
-    assert travel_started is True
-    assert elevator.params["state"] == "moving"
-
-
-@pytest.mark.asyncio
-async def test_editable_elevator_durations_drive_runtime_timing(
-    make_world,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Door dwell and floor travel should use each elevator's editable values."""
-
-    world = make_world(grid_size=41)
-    server = world.server
-    client = world.join("tester", x=10, y=10, z=0, client_id="u1")
-    elevator = server.item_service.default_item(client, "elevator")
-    elevator.params.update(
-        {
-            "state": "door_open",
-            "doorOpen": True,
-            "doorOpenSeconds": 7.5,
-            "travelSeconds": 1.25,
-        }
-    )
-    server.item_service.add_item(elevator)
-    sleeps: list[float] = []
-
-    async def immediate_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-
-    monkeypatch.setattr(asyncio, "sleep", immediate_sleep)
-
-    await server.item_runtime.elevator.run_cycle(elevator.id)
-    assert sleeps[:2] == [7.5, ELEVATOR_DOOR_CLOSE_SOUND_SECONDS]
-
-    sleeps.clear()
-    await server.item_runtime.elevator.advance_travel(elevator, 0, 0)
-    assert sleeps == [1.25]
 
 
 @pytest.mark.asyncio

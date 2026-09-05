@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '../state/gameState';
 import { createOnMessageHandler } from './messageHandlers';
+import { welcomeMessageSchema } from './protocol';
 
 function setupRemoteMovement() {
   const state = createInitialState();
@@ -58,5 +59,54 @@ describe('remote movement audio', () => {
       acousticZoneId: 'floor:0',
       gain: 0.7,
     });
+  });
+});
+
+describe('welcome door clips', () => {
+  const welcome = {
+    type: 'welcome',
+    id: 'self',
+    player: { id: 'self', nickname: 'Self', x: 0, y: 0, z: 0, acousticZoneId: 'floor:0' },
+    users: [],
+    worldConfig: {
+      gridSize: 41,
+      floors: [{ id: 'ground', name: 'Ground', z: 0 }],
+      elevatorDoorClipSeconds: { open: 4, close: 6 },
+    },
+  };
+
+  it('requires positive open and close clip lengths in world config', () => {
+    expect(welcomeMessageSchema.safeParse(welcome).success).toBe(true);
+    for (const clips of [undefined, { open: 0, close: 6 }, { open: 4, close: -1 }]) {
+      expect(welcomeMessageSchema.safeParse({
+        ...welcome,
+        worldConfig: { ...welcome.worldConfig, elevatorDoorClipSeconds: clips },
+      }).success).toBe(false);
+    }
+  });
+
+  it('applies server clip lengths before refreshing acoustics', async () => {
+    const calls: string[] = [];
+    const setElevatorDoorClips = vi.fn(() => calls.push('clips'));
+    const refreshAcousticModel = vi.fn(() => calls.push('refresh'));
+    const element = { classList: { add: vi.fn(), remove: vi.fn() }, focus: vi.fn() };
+    const provided = {
+      state: createInitialState(),
+      getWorldGridSize: () => 41,
+      setElevatorDoorClips,
+      refreshAcousticModel,
+      peerManager: { setListenerFloor: vi.fn() },
+      dom: { connectButton: element, disconnectButton: element, focusGridButton: element, canvas: element, instructions: element },
+    };
+    const deps = new Proxy(provided, {
+      get(target, property, receiver) {
+        return Reflect.has(target, property) ? Reflect.get(target, property, receiver) : vi.fn();
+      },
+    }) as unknown as Parameters<typeof createOnMessageHandler>[0];
+
+    await createOnMessageHandler(deps)(welcomeMessageSchema.parse(welcome));
+
+    expect(setElevatorDoorClips).toHaveBeenCalledWith({ openSeconds: 4, closeSeconds: 6 });
+    expect(calls).toEqual(['clips', 'refresh']);
   });
 });

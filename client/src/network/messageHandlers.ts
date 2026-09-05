@@ -1,6 +1,7 @@
 import { type IncomingMessage } from './protocol';
 import { type StructurePreset, type WallStructure, type WorldItem } from '../state/gameState';
 import { WORLD_FOOTSTEP_GAIN, type WorldSoundSource } from '../audio/worldAudio';
+import type { ElevatorDoorClips } from '../items/types/elevator/car';
 
 /**
  * Dependency contract for creating a message handler without hard-coupling to `main.ts`.
@@ -9,6 +10,7 @@ type MessageHandlerDeps = {
   getWorldGridSize: () => number;
   setWorldGridSize: (size: number) => void;
   setWorldFloors: (floors: Array<{ id: string; name: string; z: number }>) => void;
+  setElevatorDoorClips: (clips: ElevatorDoorClips) => void;
   setStructurePresets: (presets: StructurePreset[]) => void;
   refreshStructureGeometry: () => void;
   setMovementTickMs: (value: number) => void;
@@ -137,6 +139,12 @@ export function createOnMessageHandler(deps: MessageHandlerDeps): (message: Inco
         }
         if (message.worldConfig?.floors) {
           deps.setWorldFloors(message.worldConfig.floors);
+        }
+        if (message.worldConfig) {
+          deps.setElevatorDoorClips({
+            openSeconds: message.worldConfig.elevatorDoorClipSeconds.open,
+            closeSeconds: message.worldConfig.elevatorDoorClipSeconds.close,
+          });
         }
         deps.setStructurePresets(message.worldConfig?.structurePresets ?? []);
         deps.rendererSetGridSize(deps.getWorldGridSize());

@@ -10,6 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from .client import ClientConnection
 from .item_catalog import get_item_definition
+from .items.types.elevator.car import ElevatorCar
 from .models import PersistedWorldItem, WorldItem
 
 LOGGER = logging.getLogger("chgrid.server")
@@ -171,30 +172,7 @@ class ItemService:
                     ],
                 )
                 if item.type == "elevator":
-                    for timing_key in ("doorOpenSeconds", "travelSeconds"):
-                        item.params.setdefault(
-                            timing_key, item_def.default_params[timing_key]
-                        )
-                    configured_floor_zs = item.params.get("floorZs", [0, 40])
-                    floor_zs = {
-                        int(floor_z)
-                        for floor_z in configured_floor_zs
-                        if isinstance(floor_z, int)
-                    }
-                    current_z = int(item.params.get("currentZ", 0))
-                    if current_z not in floor_zs:
-                        current_z = min(floor_zs, default=0)
-                    item.z = 0
-                    item.params.update(
-                        {
-                            "currentZ": current_z,
-                            "targetZ": None,
-                            "queuedZ": None,
-                            "departOnCloseZ": None,
-                            "state": "idle",
-                            "doorOpen": False,
-                        }
-                    )
+                    ElevatorCar(item).reset_to_landing(item_def.default_params)
                 elif item.carrierId is not None:
                     item.carrierId = None
                     if item.z not in (0, 40):
