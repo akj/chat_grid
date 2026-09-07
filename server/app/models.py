@@ -28,6 +28,13 @@ class UpdateFacingPacket(BasePacket):
     facingDeg: FacingDeg
 
 
+class TurnPacket(BasePacket):
+    """Request one relative 45-degree player turn."""
+
+    type: Literal["turn"]
+    direction: Literal["left", "right"]
+
+
 class TeleportCompletePacket(BasePacket):
     type: Literal["teleport_complete"]
     x: int
@@ -263,6 +270,7 @@ class StructureDeletePacket(BasePacket):
 ClientPacket = (
     UpdatePositionPacket
     | UpdateFacingPacket
+    | TurnPacket
     | TeleportCompletePacket
     | UpdateNicknamePacket
     | ChatMessagePacket

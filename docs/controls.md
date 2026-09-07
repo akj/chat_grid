@@ -16,7 +16,8 @@ This document is the authoritative keymap for the client.
 ## Normal Mode
 
 ### Movement
-- `Arrow Keys`: Move using compass directions
+- `Arrow Keys`: In standard mode, move using compass directions. In HRTF mode, `ArrowUp` moves forward, `ArrowDown` moves backward, and `ArrowLeft`/`ArrowRight` strafe relative to your facing; moves advance at most one square per axis. Arrows do not change facing.
+- `Q` / `E`: Turn facing left/right by 45 degrees in standard or HRTF mode; confirmed turns announce the new compass direction
 - `Shift+K`, `Applications`, or `Shift+F10`: Open the command palette in supported modes
 - `?`: Open help viewer
 - `C`: Speak coordinates and any walls bordering the current square
@@ -85,7 +86,7 @@ The number-key audio toggles act once per press; holding a key does not toggle r
 - `3`: Toggle media layer (radio)
 - `4`: Toggle world layer (other-user world sounds)
 - `Shift+4`: Toggle HRTF spatial audio (saved per browser; standard mode is the default)
-- `E`: Effect select menu
+- `Shift+E`: Effect select menu in standard or HRTF mode
 - `-` / `=`: Lower/raise master volume
 - `_` / `+` (`Shift+-` / `Shift+=`): Lower/raise active effect value
 

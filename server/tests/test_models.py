@@ -1,4 +1,5 @@
 from pydantic import ValidationError, TypeAdapter
+import pytest
 
 from app.models import ClientPacket
 
@@ -24,6 +25,17 @@ def test_update_facing_accepts_only_canonical_headings() -> None:
         except ValidationError:
             continue
         assert False, f"heading {value!r} should fail validation"
+
+
+def test_turn_validates_relative_direction() -> None:
+    adapter: TypeAdapter[ClientPacket] = TypeAdapter(ClientPacket)
+
+    assert adapter.validate_python({"type": "turn", "direction": "left"}).type == "turn"
+    assert (
+        adapter.validate_python({"type": "turn", "direction": "right"}).type == "turn"
+    )
+    with pytest.raises(ValidationError):
+        adapter.validate_python({"type": "turn", "direction": "north"})
 
 
 def test_unknown_type_rejected() -> None:

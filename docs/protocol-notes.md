@@ -24,8 +24,9 @@ This is a behavior guide for packet semantics beyond raw schemas.
 - `admin_user_set_role`: set target user role.
 - `admin_user_ban` / `admin_user_unban`: disable/enable user account.
 - `admin_user_delete`: permanently delete target account.
-- `update_position`: client movement intent with `x`, `y`, and `z`; server enforces bounds, wall crossings, rate policy, and an unchanged floor.
-- `update_facing`: request one of the eight player headings with `facingDeg` in 45-degree steps. The server validates the heading and republishes the canonical position.
+- `update_position`: client movement intent with `x`, `y`, and `z`; server enforces bounds, wall crossings, rate policy, and an unchanged floor. Movement does not change the server-owned facing.
+- `turn`: request a validated 45-degree relative turn in either audio mode with `{ "type": "turn", "direction": "left" | "right" }`; the server persists the resulting facing and republishes the canonical position.
+- `update_facing`: retained absolute-facing packet for one of the eight headings with `facingDeg` in 45-degree steps. The server validates the heading and republishes the canonical position.
 - `teleport_complete`: client signals an `x`, `y`, `z` teleport landing; server rejects direct floor changes and rebroadcasts the spatial cue.
 - `update_nickname`: nickname change request (server enforces uniqueness).
 - `chat_message`: player chat.
@@ -157,11 +158,11 @@ This is a behavior guide for packet semantics beyond raw schemas.
 ## Validation Boundaries
 
 - Server is authoritative for all action validation and normalization.
-- Server is authoritative for movement acceptance (bounds + wall crossing + rate/delta checks) and rejects client attempts to change `z`. `facingDeg` uses eight clockwise headings: `0` north (`+y`), `45` northeast, `90` east (`+x`), `135` southeast, `180` south, `225` southwest, `270` west, and `315` northwest. Successful ordinary movement updates facing from its delta; blocked movement and teleports preserve the previous heading.
+- Server is authoritative for movement acceptance (bounds + wall crossing + rate/delta checks) and rejects client attempts to change `z`. `facingDeg` uses eight clockwise headings: `0` north (`+y`), `45` northeast, `90` east (`+x`), `135` southeast, `180` south, `225` southwest, `270` west, and `315` northwest. Validated turn packets change facing; ordinary movement, blocked movement, teleports, and elevator travel preserve the previous heading.
 - Cardinal movement is blocked by a wall on its crossed edge. Diagonal movement is blocked when both possible two-step routes around the shared corner contain a blocking wall.
 - Acoustic rays distinguish wall endpoints from interior joints: grazing an actual run endpoint contributes half-strength gain/filtering, while a continuing wall or two-wall corner contributes fully.
 - Structure mutations require `world.structure.edit`, which defaults to the built-in `editor` and `admin` roles.
-- Server persists account state (last nickname + last position) and restores spawn from that state on auth login/resume.
+- Server persists account state (last nickname + last position + facing) and restores spawn and facing from that state on auth login/resume.
 - Server also supports websocket handshake cookie resume:
   - accepts browser sockets only when websocket `Origin` matches `CHGRID_HOST_ORIGIN`
   - websocket and auth helper routes are scoped under the configured `server.base_path`

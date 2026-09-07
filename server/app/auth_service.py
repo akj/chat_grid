@@ -136,6 +136,7 @@ class AuthUser:
     last_x: int | None
     last_y: int | None
     last_z: int | None
+    last_facing_deg: int | None
 
 
 @dataclass(frozen=True)
@@ -565,7 +566,8 @@ class AuthService:
                 us.last_nickname,
                 us.last_x,
                 us.last_y,
-                us.last_z
+                us.last_z,
+                us.last_facing_deg
             FROM users u
             JOIN roles r ON r.id = u.role_id
             LEFT JOIN user_state us ON us.user_id = u.id
@@ -682,8 +684,8 @@ class AuthService:
             raise AuthError("Failed to load newly created user.")
         self._db_execute(
             """
-            INSERT OR IGNORE INTO user_state (user_id, last_nickname, last_x, last_y, last_z, updated_at_ms)
-            VALUES (?, ?, NULL, NULL, NULL, ?)
+            INSERT OR IGNORE INTO user_state (user_id, last_nickname, last_x, last_y, last_z, last_facing_deg, updated_at_ms)
+            VALUES (?, ?, NULL, NULL, NULL, NULL, ?)
             """,
             (int(user.id), user.username, self.now_ms()),
         )
@@ -699,6 +701,7 @@ class AuthService:
             last_x=user.last_x,
             last_y=user.last_y,
             last_z=user.last_z,
+            last_facing_deg=user.last_facing_deg,
         )
         return self._create_session(user)
 
@@ -718,7 +721,8 @@ class AuthService:
                 us.last_nickname,
                 us.last_x,
                 us.last_y,
-                us.last_z
+                us.last_z,
+                us.last_facing_deg
             FROM users u
             JOIN roles r ON r.id = u.role_id
             LEFT JOIN user_state us ON us.user_id = u.id
@@ -752,6 +756,7 @@ class AuthService:
                 last_x=user.last_x,
                 last_y=user.last_y,
                 last_z=user.last_z,
+                last_facing_deg=user.last_facing_deg,
             )
         now_ms = self.now_ms()
         self._db_execute(
@@ -771,7 +776,7 @@ class AuthService:
         row = self._db_fetchone(
             """
             SELECT s.id AS session_id, s.user_id, s.expires_at_ms, s.revoked_at_ms,
-                   u.username, r.name AS role_name, u.status, u.email, us.last_nickname, us.last_x, us.last_y, us.last_z
+                   u.username, r.name AS role_name, u.status, u.email, us.last_nickname, us.last_x, us.last_y, us.last_z, us.last_facing_deg
             FROM sessions s
             JOIN users u ON u.id = s.user_id
             JOIN roles r ON r.id = u.role_id
@@ -811,6 +816,9 @@ class AuthService:
             last_x=row["last_x"] if "last_x" in row.keys() else None,
             last_y=row["last_y"] if "last_y" in row.keys() else None,
             last_z=row["last_z"] if "last_z" in row.keys() else None,
+            last_facing_deg=row["last_facing_deg"]
+            if "last_facing_deg" in row.keys()
+            else None,
         )
         if not user.last_nickname:
             self.set_last_nickname(user.id, user.username)
@@ -825,6 +833,7 @@ class AuthService:
                 last_x=user.last_x,
                 last_y=user.last_y,
                 last_z=user.last_z,
+                last_facing_deg=user.last_facing_deg,
             )
         return AuthSession(session_id=str(row["session_id"]), token=cleaned, user=user)
 
@@ -854,8 +863,8 @@ class AuthService:
         try:
             self._db_execute(
                 """
-                INSERT INTO user_state (user_id, last_nickname, last_x, last_y, last_z, updated_at_ms)
-                VALUES (?, ?, NULL, NULL, NULL, ?)
+                INSERT INTO user_state (user_id, last_nickname, last_x, last_y, last_z, last_facing_deg, updated_at_ms)
+                VALUES (?, ?, NULL, NULL, NULL, NULL, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     last_nickname = excluded.last_nickname,
                     updated_at_ms = excluded.updated_at_ms
@@ -866,8 +875,10 @@ class AuthService:
         except sqlite3.IntegrityError:
             self._db_rollback()
 
-    def set_last_position(self, user_id: str, x: int, y: int, z: int) -> None:
-        """Persist last known world position for one user."""
+    def set_last_position(
+        self, user_id: str, x: int, y: int, z: int, facing_deg: int = 0
+    ) -> None:
+        """Persist last known world position and facing for one user."""
 
         try:
             user_id_value = int(user_id)
@@ -876,15 +887,23 @@ class AuthService:
         try:
             self._db_execute(
                 """
-                INSERT INTO user_state (user_id, last_nickname, last_x, last_y, last_z, updated_at_ms)
-                VALUES (?, NULL, ?, ?, ?, ?)
+                INSERT INTO user_state (user_id, last_nickname, last_x, last_y, last_z, last_facing_deg, updated_at_ms)
+                VALUES (?, NULL, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     last_x = excluded.last_x,
                     last_y = excluded.last_y,
                     last_z = excluded.last_z,
+                    last_facing_deg = excluded.last_facing_deg,
                     updated_at_ms = excluded.updated_at_ms
                 """,
-                (user_id_value, int(x), int(y), int(z), self.now_ms()),
+                (
+                    user_id_value,
+                    int(x),
+                    int(y),
+                    int(z),
+                    int(facing_deg),
+                    self.now_ms(),
+                ),
             )
             self._db_commit()
         except sqlite3.IntegrityError:
@@ -1019,6 +1038,7 @@ class AuthService:
                 last_x INTEGER,
                 last_y INTEGER,
                 last_z INTEGER,
+                last_facing_deg INTEGER,
                 updated_at_ms INTEGER NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
@@ -1030,6 +1050,10 @@ class AuthService:
         }
         if "last_z" not in user_state_cols:
             self._db_execute("ALTER TABLE user_state ADD COLUMN last_z INTEGER")
+        if "last_facing_deg" not in user_state_cols:
+            self._db_execute(
+                "ALTER TABLE user_state ADD COLUMN last_facing_deg INTEGER"
+            )
 
         self._seed_permissions_and_roles()
         self._backfill_user_roles()
@@ -1196,7 +1220,8 @@ class AuthService:
                 us.last_nickname,
                 us.last_x,
                 us.last_y,
-                us.last_z
+                us.last_z,
+                us.last_facing_deg
             FROM users u
             JOIN roles r ON r.id = u.role_id
             LEFT JOIN user_state us ON us.user_id = u.id
@@ -1255,6 +1280,9 @@ class AuthService:
             last_x=row["last_x"] if "last_x" in row.keys() else None,
             last_y=row["last_y"] if "last_y" in row.keys() else None,
             last_z=row["last_z"] if "last_z" in row.keys() else None,
+            last_facing_deg=row["last_facing_deg"]
+            if "last_facing_deg" in row.keys()
+            else None,
         )
 
     @staticmethod

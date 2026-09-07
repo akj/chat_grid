@@ -25,6 +25,7 @@ class ClientConnection:
     saved_x: int | None = None
     saved_y: int | None = None
     saved_z: int | None = None
+    saved_facing_deg: int | None = None
     x: int = 20
     y: int = 20
     z: int = 0

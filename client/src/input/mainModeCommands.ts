@@ -114,7 +114,7 @@ const MAIN_MODE_COMMANDS: MainModeCommandDescriptor[] = [
   {
     id: 'openEffectSelect',
     label: 'Open effect select',
-    shortcut: 'E',
+    shortcut: 'Shift+E',
     tooltip: 'Open the effects menu.',
     section: 'Audio',
     isAvailable: () => true,
@@ -133,6 +133,22 @@ const MAIN_MODE_COMMANDS: MainModeCommandDescriptor[] = [
     shortcut: 'Shift+-',
     tooltip: 'Decrease the selected effect amount.',
     section: 'Audio',
+    isAvailable: () => true,
+  },
+  {
+    id: 'turnLeft',
+    label: 'Turn left 45 degrees',
+    shortcut: 'Q',
+    tooltip: 'Turn left 45 degrees.',
+    section: 'Navigation',
+    isAvailable: () => true,
+  },
+  {
+    id: 'turnRight',
+    label: 'Turn right 45 degrees',
+    shortcut: 'E',
+    tooltip: 'Turn right 45 degrees.',
+    section: 'Navigation',
     isAvailable: () => true,
   },
   {

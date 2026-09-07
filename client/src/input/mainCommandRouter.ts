@@ -6,6 +6,8 @@ export type MainModeCommand =
   | 'toggleMute'
   | 'toggleOutputMode'
   | 'toggleHrtf'
+  | 'turnLeft'
+  | 'turnRight'
   | 'toggleLoopback'
   | 'toggleVoiceLayer'
   | 'toggleItemLayer'
@@ -54,7 +56,8 @@ export function resolveMainModeCommand(code: string, shiftKey: boolean): MainMod
   if (code === 'Digit2') return shiftKey ? null : 'toggleItemLayer';
   if (code === 'Digit3') return shiftKey ? null : 'toggleMediaLayer';
   if (code === 'Digit4') return shiftKey ? 'toggleHrtf' : 'toggleWorldLayer';
-  if (code === 'KeyE') return shiftKey ? null : 'openEffectSelect';
+  if (code === 'KeyQ') return shiftKey ? null : 'turnLeft';
+  if (code === 'KeyE') return shiftKey ? 'openEffectSelect' : 'turnRight';
   if (code === 'Equal') return shiftKey ? 'effectValueUp' : 'masterVolumeUp';
   if (code === 'Minus') return shiftKey ? 'effectValueDown' : 'masterVolumeDown';
   if (code === 'NumpadAdd') return 'masterVolumeUp';

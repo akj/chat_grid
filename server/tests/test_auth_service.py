@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 from typing import cast
 
 import pytest
@@ -28,6 +29,58 @@ def test_register_and_resume_session(tmp_path: Path) -> None:
         assert resumed.user.id == session.user.id
         assert resumed.user.role == "user"
         assert "user.list" in resumed.user.permissions
+    finally:
+        service.close()
+
+
+def test_last_position_persists_facing(tmp_path: Path) -> None:
+    service = make_auth_service(tmp_path)
+    try:
+        session = service.register("facing_user", "password99")
+        service.set_last_position(session.user.id, 3, 4, 0, 315)
+
+        saved = service.get_user_by_id(session.user.id)
+        assert saved is not None
+        assert (saved.last_x, saved.last_y, saved.last_z) == (3, 4, 0)
+        assert saved.last_facing_deg == 315
+    finally:
+        service.close()
+
+    resumed_service = make_auth_service(tmp_path)
+    try:
+        resumed = resumed_service.login("facing_user", "password99")
+        assert resumed.user.last_facing_deg == 315
+    finally:
+        resumed_service.close()
+
+
+def test_existing_user_state_schema_migrates_facing_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "chatgrid.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute(
+            """
+            CREATE TABLE user_state (
+                user_id INTEGER PRIMARY KEY,
+                last_nickname TEXT,
+                last_x INTEGER,
+                last_y INTEGER,
+                last_z INTEGER,
+                updated_at_ms INTEGER NOT NULL
+            )
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    service = make_auth_service(tmp_path)
+    try:
+        columns = {
+            str(row[1])
+            for row in service._conn.execute("PRAGMA table_info(user_state)")
+        }
+        assert "last_facing_deg" in columns
     finally:
         service.close()
 

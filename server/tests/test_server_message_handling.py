@@ -139,36 +139,19 @@ async def test_update_position_cannot_change_floor(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("x", "y", "expected_facing"),
-    [
-        (6, 6, 45),
-        (6, 5, 90),
-        (6, 4, 135),
-        (5, 4, 180),
-        (4, 4, 225),
-        (4, 5, 270),
-        (4, 6, 315),
-    ],
-)
-async def test_successful_movement_updates_facing(
-    make_world,
-    x: int,
-    y: int,
-    expected_facing: int,
-) -> None:
+async def test_successful_movement_preserves_facing(make_world) -> None:
     world = make_world(grid_size=41)
     server, transport = world.server, world.transport
     observer = world.join("observer", x=40, y=40)
-    client = world.join("tester", x=5, y=5, client_id="u1")
+    client = world.join("tester", x=5, y=5, client_id="u1", facing_deg=225)
 
     await server._handle_message(
-        client, json.dumps({"type": "update_position", "x": x, "y": y, "z": 0})
+        client, json.dumps({"type": "update_position", "x": 6, "y": 6, "z": 0})
     )
 
-    assert client.facing_deg == expected_facing
+    assert client.facing_deg == 225
     position = transport.last_packet_of_type(observer, BroadcastPositionPacket)
-    assert position.facingDeg == expected_facing
+    assert position.facingDeg == 225
 
 
 @pytest.mark.asyncio
@@ -216,6 +199,25 @@ async def test_update_facing_broadcasts_canonical_position(make_world) -> None:
 
 
 @pytest.mark.asyncio
+async def test_turn_applies_each_relative_request_and_wraps(make_world) -> None:
+    world = make_world(grid_size=41)
+    server, transport = world.server, world.transport
+    observer = world.join("observer", x=40, y=40)
+    client = world.join("tester", x=5, y=5, client_id="u1")
+
+    for direction in ("right", "right", "left", "left", "left", "right"):
+        await server._handle_message(
+            client, json.dumps({"type": "turn", "direction": direction})
+        )
+
+    assert (client.x, client.y, client.facing_deg) == (5, 5, 0)
+    assert [
+        packet.facingDeg
+        for packet in transport.packets_of_type(observer, BroadcastPositionPacket)
+    ] == [45, 90, 45, 0, 315, 0]
+
+
+@pytest.mark.asyncio
 async def test_update_facing_requires_authenticated_ready_client(make_world) -> None:
     world = make_world(grid_size=41)
     server, transport = world.server, world.transport
@@ -228,6 +230,12 @@ async def test_update_facing_requires_authenticated_ready_client(make_world) -> 
     )
     await server._handle_message(
         pre_ready, json.dumps({"type": "update_facing", "facingDeg": 180})
+    )
+    await server._handle_message(
+        unauthenticated, json.dumps({"type": "turn", "direction": "right"})
+    )
+    await server._handle_message(
+        pre_ready, json.dumps({"type": "turn", "direction": "right"})
     )
 
     assert unauthenticated.facing_deg == 0
@@ -265,6 +273,15 @@ async def test_update_facing_does_not_sync_carried_items(
     assert (item.x, item.y, item.z) == (5, 5, 0)
     assert transport.packets_of_type(observer, ItemUpsertPacket) == []
 
+    transport.clear()
+    await server._handle_message(
+        client, json.dumps({"type": "turn", "direction": "right"})
+    )
+
+    assert sync_calls == []
+    assert (item.x, item.y, item.z) == (5, 5, 0)
+    assert transport.packets_of_type(observer, ItemUpsertPacket) == []
+
 
 @pytest.mark.asyncio
 async def test_welcome_presence_includes_facing(make_world) -> None:
@@ -279,6 +296,48 @@ async def test_welcome_presence_includes_facing(make_world) -> None:
     assert welcome.player.facingDeg == 225
     assert welcome.users[0].id == observer.id
     assert welcome.users[0].facingDeg == 315
+
+
+@pytest.mark.asyncio
+async def test_turn_persists_and_reconnect_restores_facing(
+    make_world,
+    tmp_path: Path,
+) -> None:
+    world = make_world(auth_db_path=tmp_path / "auth.db")
+    server, transport = world.server, world.transport
+    username = f"turn_{uuid.uuid4().hex[:8]}"
+    server.auth_service.register(username, "password99")
+    client = world.connect("tester", client_id="u1")
+
+    await server._handle_message(
+        client,
+        json.dumps(
+            {"type": "auth_login", "username": username, "password": "password99"}
+        ),
+    )
+    await server._handle_message(client, json.dumps({"type": "welcome_ready"}))
+    transport.clear()
+
+    await server._handle_message(
+        client, json.dumps({"type": "turn", "direction": "right"})
+    )
+
+    assert client.facing_deg == 45
+    saved = server.auth_service.get_user_by_id(client.user_id or "")
+    assert saved is not None
+    assert saved.last_facing_deg == 45
+
+    reconnect = world.connect("reconnect", client_id="u2")
+    await server._handle_message(
+        reconnect,
+        json.dumps(
+            {"type": "auth_login", "username": username, "password": "password99"}
+        ),
+    )
+
+    assert reconnect.facing_deg == 45
+    welcome = transport.last_packet_of_type(reconnect, WelcomePacket)
+    assert welcome.player.facingDeg == 45
 
 
 @pytest.mark.asyncio

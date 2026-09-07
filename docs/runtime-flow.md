@@ -25,7 +25,7 @@
    - applies `welcome.worldConfig.movementTickMs` as movement pacing guidance
    - applies `welcome.worldConfig.movementMaxStepsPerTick` for movement-rate parity
    - applies `welcome.worldConfig.structurePresets` and the canonical wall snapshot for World Builder, rendering, and collision prediction
-   - uses `welcome.player` as authoritative starting position and `facingDeg` (restored position when available; facing defaults north)
+   - uses `welcome.player` as authoritative starting position and `facingDeg` (restored from account state on reconnect; new accounts start facing north)
    - records `welcome.serverInfo` (`instanceId`, `releaseVersion`, `serverVersion`, `expectedClientRevision`, `gridName`, `welcomeMessage`) for restart detection and client branding
    - if `welcome.serverInfo.expectedClientRevision` differs from the running client revision, auto-reloads the page
    - applies `welcome.uiDefinitions` for item menus/properties/options, server-backed command metadata, item-management metadata, and admin menu labels/order
@@ -60,10 +60,10 @@ Radio metadata polling is limited to stations near a listener, deduplicated by s
 ## Spatial Audio And Facing
 
 - Voice, world samples and locate tones, radios, item emitters, elevator ambience, and piano notes use the same positional renderer in `audio/spatial.ts`.
-- Both standard and HRTF modes use a browser `PannerNode`; only its panning model changes (`equalpower` or `HRTF`). The application owns distance gain, source directionality, wall filtering, and acoustic-zone transmission. Browser distance attenuation is disabled to avoid applying a second distance curve.
-- Listener orientation uses AudioParams where available and `setOrientation` on browsers such as Firefox that expose only the method. Both APIs feed the same spatial renderer.
-- Positions use listener-relative world coordinates, mapping grid north (`+y`) to audio forward (`-z`) and world height to audio up. Server-owned facing rotates the audio listener. Arrows retain compass movement; separate turning keys are not assigned yet.
+- Both standard and HRTF modes use a browser `PannerNode`, with the `equalpower` and `HRTF` panning models respectively. The application owns distance gain, source directionality, wall filtering, and acoustic-zone transmission. Browser distance attenuation is disabled to avoid applying a second distance curve.
+- Positions use listener-relative world coordinates, mapping grid north (`+y`) to audio forward (`-z`) and world height to audio up. Standard-mode arrows retain compass movement; HRTF-mode arrows move relative to facing without changing it. `Q` and `E` turn facing left or right by 45 degrees in either audio mode and announce the confirmed compass direction without a prefix; `F` announces the current facing. Only HRTF uses facing to rotate audio; standard audio remains north-aligned. The shared renderer rotates source coordinates into the listener frame and smooths their positions over roughly 200 ms, keeping the native listener fixed for consistent turning across browsers. Co-located sounds remain directly centered throughout a turn.
 - `Shift+4` switches active and future sources immediately and saves the listener's preference in browser storage. Standard mode is the default. Mono centers and downmixes positional sources while preserving the HRTF preference for a return to stereo.
+- `Shift+E` opens effect selection in both standard and HRTF modes.
 - Sustained piano notes and release tails update their source position and transmission as the listener or item moves. The shared world transmission resolver also serves voice, sampled world sounds, radio, and emit audio.
 - Co-located held sounds and interior elevator ambience stay centered. Multi-floor item sounds use the appropriate landing height. Elevator landing cues retain their floor source ownership and door transmission rules; HRTF does not connect otherwise isolated floors or cabins.
 - UI cues, local footsteps, and microphone monitoring remain non-positional.
@@ -137,7 +137,7 @@ Core incoming message effects:
 ## Floors And Elevators
 
 - World positions use integer `x`, `y`, and `z`. Ground is `z=0`; the second floor is `z=40`.
-- Player facing uses eight headings in degrees: `0` north (`+y`), `45` northeast, `90` east (`+x`), `135` southeast, `180` south, `225` southwest, `270` west, and `315` northwest. Successful ordinary movement changes facing; blocked movement, teleports, and elevator travel preserve it.
+- Player facing uses eight headings in degrees: `0` north (`+y`), `45` northeast, `90` east (`+x`), `135` southeast, `180` south, `225` southwest, `270` west, and `315` northwest. Turns in either audio mode change facing; movement, blocked movement, teleports, and elevator travel preserve it.
 - Normal movement and teleport packets must keep the server-owned `z`. Only the elevator changes floors.
 - The client renders only the current floor. Item lists and interactions are current-floor only; the user list remains global and names each floor.
 - Cross-floor user teleport is blocked in the client, and the server rejects any packet that attempts to change `z` directly.

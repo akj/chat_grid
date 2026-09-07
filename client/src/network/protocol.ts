@@ -525,6 +525,7 @@ export type OutgoingMessage =
   | { type: 'admin_user_delete'; username: string }
   | { type: 'update_position'; x: number; y: number; z: number }
   | { type: 'update_facing'; facingDeg: FacingDeg }
+  | { type: 'turn'; direction: 'left' | 'right' }
   | { type: 'teleport_complete'; x: number; y: number; z: number }
   | { type: 'update_nickname'; nickname: string }
   | { type: 'chat_message'; message: string }

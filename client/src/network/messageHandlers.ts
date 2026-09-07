@@ -1,5 +1,5 @@
 import { type IncomingMessage } from './protocol';
-import { type StructurePreset, type WallStructure, type WorldItem } from '../state/gameState';
+import { getFacingDirection, type StructurePreset, type WallStructure, type WorldItem } from '../state/gameState';
 import { WORLD_FOOTSTEP_GAIN, type WorldSoundSource } from '../audio/worldAudio';
 
 /**
@@ -192,6 +192,7 @@ export function createOnMessageHandler(deps: MessageHandlerDeps): (message: Inco
 
       case 'update_position': {
         if (message.id === deps.state.player.id) {
+          const facingChanged = deps.state.player.facingDeg !== message.facingDeg;
           const floorChanged = deps.state.player.z !== message.z;
           deps.state.player.x = message.x;
           deps.state.player.y = message.y;
@@ -205,6 +206,9 @@ export function createOnMessageHandler(deps: MessageHandlerDeps): (message: Inco
           if (floorChanged || zoneChanged) {
             deps.refreshAcousticModel();
             await deps.refreshAudioSubscriptions(true);
+          }
+          if (facingChanged) {
+            deps.updateStatus(getFacingDirection(message.facingDeg));
           }
           break;
         }

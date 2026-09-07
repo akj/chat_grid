@@ -5,7 +5,7 @@
       "items": [
         {
           "keys": "Arrow Keys",
-          "description": "Move on the grid using compass directions"
+          "description": "Move on the grid"
         },
         {
           "keys": "Shift+K / Applications / Shift+F10",
@@ -18,6 +18,10 @@
         {
           "keys": "F",
           "description": "Announce facing direction"
+        },
+        {
+          "keys": "Q / E",
+          "description": "Turn facing left/right 45 degrees"
         },
         {
           "keys": "N",
@@ -151,7 +155,7 @@
           "description": "Toggle HRTF mode"
         },
         {
-          "keys": "E",
+          "keys": "Shift+E",
           "description": "Select voice effect"
         },
         {

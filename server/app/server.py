@@ -91,6 +91,7 @@ from .models import (
     StructureUpdateWallPacket,
     StructureUpsertPacket,
     TeleportCompletePacket,
+    TurnPacket,
     UpdateFacingPacket,
     UpdateNicknamePacket,
     UpdatePositionPacket,
@@ -136,6 +137,7 @@ FLOOR_DEFINITIONS: tuple[dict[str, str | int], ...] = (
     {"id": "second", "name": "Second floor", "z": 40},
 )
 FLOOR_ELEVATIONS = frozenset(int(floor["z"]) for floor in FLOOR_DEFINITIONS)
+FACING_DEGREES: tuple[FacingDeg, ...] = (0, 45, 90, 135, 180, 225, 270, 315)
 AUTH_SESSION_COOKIE_NAME = "chgrid_session_token"
 AUTH_SESSION_COOKIE_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
 AUTH_SESSION_COOKIE_SET_PATH = "auth/session/set"
@@ -379,7 +381,7 @@ class SignalingServer:
             if now_ms - last_saved_ms < POSITION_PERSIST_DEBOUNCE_MS:
                 return
         self.auth_service.set_last_position(
-            client.user_id, client.x, client.y, client.z
+            client.user_id, client.x, client.y, client.z, client.facing_deg
         )
         self._last_position_persist_ms_by_user[client.user_id] = now_ms
 
@@ -874,24 +876,14 @@ class SignalingServer:
         return True
 
     @staticmethod
-    def _facing_for_move(delta_x: int, delta_y: int) -> FacingDeg:
-        """Return the canonical clockwise heading for one movement delta."""
+    def _turn_facing(
+        facing_deg: FacingDeg, direction: Literal["left", "right"]
+    ) -> FacingDeg:
+        """Apply one canonical 45-degree relative turn with clockwise wraparound."""
 
-        direction = (
-            0 if delta_x == 0 else 1 if delta_x > 0 else -1,
-            0 if delta_y == 0 else 1 if delta_y > 0 else -1,
-        )
-        headings: dict[tuple[int, int], FacingDeg] = {
-            (0, 1): 0,
-            (1, 1): 45,
-            (1, 0): 90,
-            (1, -1): 135,
-            (0, -1): 180,
-            (-1, -1): 225,
-            (-1, 0): 270,
-            (-1, 1): 315,
-        }
-        return headings.get(direction, 0)
+        offset = 1 if direction == "right" else -1
+        index = FACING_DEGREES.index(facing_deg)
+        return FACING_DEGREES[(index + offset) % len(FACING_DEGREES)]
 
     async def start(self) -> None:
         """Start websocket serving and run until cancelled."""
@@ -1081,6 +1073,7 @@ class SignalingServer:
         saved_x = getattr(client, "saved_x", None)
         saved_y = getattr(client, "saved_y", None)
         saved_z = getattr(client, "saved_z", None)
+        saved_facing_deg = getattr(client, "saved_facing_deg", None)
         if (
             isinstance(saved_x, int)
             and isinstance(saved_y, int)
@@ -1095,6 +1088,11 @@ class SignalingServer:
             client.x = random.randrange(self.grid_size)  # nosec B311
             client.y = random.randrange(self.grid_size)  # nosec B311
             client.z = 0
+        client.facing_deg = (
+            saved_facing_deg
+            if isinstance(saved_facing_deg, int) and saved_facing_deg in FACING_DEGREES
+            else 0
+        )
         now_ms = self.item_service.now_ms()
         self._refresh_client_permissions(client)
         client.last_position_update_ms = now_ms
@@ -1301,6 +1299,7 @@ class SignalingServer:
         client.saved_x = session.user.last_x
         client.saved_y = session.user.last_y
         client.saved_z = session.user.last_z
+        client.saved_facing_deg = session.user.last_facing_deg
         await self.delivery.send(
             client,
             AuthResultPacket(
@@ -1977,6 +1976,15 @@ class SignalingServer:
 
         if isinstance(packet, UpdateFacingPacket):
             client.facing_deg = packet.facingDeg
+            self._persist_client_position(client, force=True)
+            position_packet = client_position_packet(client)
+            await self.delivery.send(client, position_packet)
+            await self.delivery.broadcast(position_packet, exclude=client)
+            return
+
+        if isinstance(packet, TurnPacket):
+            client.facing_deg = self._turn_facing(client.facing_deg, packet.direction)
+            self._persist_client_position(client, force=True)
             position_packet = client_position_packet(client)
             await self.delivery.send(client, position_packet)
             await self.delivery.broadcast(position_packet, exclude=client)
@@ -2056,12 +2064,8 @@ class SignalingServer:
                 )
                 await self.delivery.send(client, client_position_packet(client))
                 return
-            delta_x = packet.x - client.x
-            delta_y = packet.y - client.y
             client.x = packet.x
             client.y = packet.y
-            if delta_x != 0 or delta_y != 0:
-                client.facing_deg = self._facing_for_move(delta_x, delta_y)
             client.last_position_update_ms = now_ms
             self._persist_client_position(client)
             await self.delivery.send(
