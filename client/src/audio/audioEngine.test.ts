@@ -72,6 +72,26 @@ describe('AudioEngine output device', () => {
 });
 
 describe('AudioEngine spatial preferences', () => {
+  it('remembers standard-mode turns without rotating audio, then applies them in HRTF', async () => {
+    vi.stubGlobal('window', { AudioContext: FakeAudioContext });
+    const audio = new AudioEngine();
+    await audio.ensureContext();
+    const context = audio.context as unknown as FakeAudioContext;
+    const forwardX = context.listener.forwardX.setTargetAtTime;
+
+    audio.setListenerFacing(90);
+    expect(forwardX).not.toHaveBeenCalled();
+    audio.setSpatialMode('hrtf');
+    expect(forwardX).toHaveBeenLastCalledWith(1, 0, expect.any(Number));
+    audio.setSpatialMode('standard');
+    expect(forwardX).toHaveBeenLastCalledWith(0, 0, expect.any(Number));
+    forwardX.mockClear();
+    audio.setListenerFacing(225);
+    expect(forwardX).not.toHaveBeenCalled();
+    audio.setSpatialMode('hrtf');
+    expect(forwardX).toHaveBeenLastCalledWith(Math.sin(225 * Math.PI / 180), 0, expect.any(Number));
+  });
+
   it('loads saved HRTF and keeps accepting facing changes with a method-only listener', async () => {
     const setOrientation = vi.fn();
     class MethodOnlyAudioContext extends FakeAudioContext {

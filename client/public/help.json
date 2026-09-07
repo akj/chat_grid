@@ -20,8 +20,8 @@
           "description": "Announce facing direction"
         },
         {
-          "keys": "Q / E (HRTF)",
-          "description": "Turn left/right 45 degrees"
+          "keys": "Q / E",
+          "description": "Turn facing left/right 45 degrees"
         },
         {
           "keys": "N",

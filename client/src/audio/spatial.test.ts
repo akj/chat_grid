@@ -32,7 +32,7 @@ describe('shared spatial renderer', () => {
     expect([panner.positionX.value, panner.positionY.value, panner.positionZ.value]).toEqual([4, 3, -2]);
   });
 
-  it('rotates the listener while source coordinates stay fixed', () => {
+  it('rotates only the HRTF listener and resets standard audio to north', () => {
     const ctx = context();
     const panner = createSpatialPanner(ctx);
     updateSpatialPanner(panner, resolveSpatialMix({ dx: 5, dy: 0, range: 15 }));
@@ -41,7 +41,8 @@ describe('shared spatial renderer', () => {
     expect(ctx.listener.forwardZ.value).toBeCloseTo(0);
     expect(panner.positionX.value).toBe(5);
     configureSpatialAudio(ctx, 'standard', 'stereo', 270);
-    expect(ctx.listener.forwardX.value).toBeCloseTo(-1);
+    expect(ctx.listener.forwardX.value).toBeCloseTo(0);
+    expect(ctx.listener.forwardZ.value).toBeCloseTo(-1);
     expect(panner.positionX.value).toBe(5);
   });
 
@@ -73,7 +74,7 @@ describe('shared spatial renderer', () => {
     updateSpatialPanner(panner, resolveSpatialMix({ dx: 5, dy: 0, range: 15 }));
 
     for (const heading of [0, 90, 180, 270, 45]) {
-      expect(() => configureSpatialAudio(ctx, 'standard', 'stereo', heading)).not.toThrow();
+      expect(() => configureSpatialAudio(ctx, 'hrtf', 'stereo', heading)).not.toThrow();
     }
     expect(setOrientation).toHaveBeenLastCalledWith(
       Math.sin(Math.PI / 4), 0, -Math.cos(Math.PI / 4), 0, 1, 0,

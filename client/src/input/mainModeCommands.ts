@@ -3,7 +3,6 @@ import type { MainModeCommand } from './mainCommandRouter';
 
 export type MainModeCommandAvailabilityContext = {
   voiceSendAllowed: boolean;
-  hrtfEnabled: boolean;
   mainHelpAvailable: boolean;
   hasAdminActions: boolean;
   hasWorldBuilder: boolean;
@@ -142,7 +141,7 @@ const MAIN_MODE_COMMANDS: MainModeCommandDescriptor[] = [
     shortcut: 'Q',
     tooltip: 'Turn left 45 degrees.',
     section: 'Navigation',
-    isAvailable: (context) => context.hrtfEnabled,
+    isAvailable: () => true,
   },
   {
     id: 'turnRight',
@@ -150,7 +149,7 @@ const MAIN_MODE_COMMANDS: MainModeCommandDescriptor[] = [
     shortcut: 'E',
     tooltip: 'Turn right 45 degrees.',
     section: 'Navigation',
-    isAvailable: (context) => context.hrtfEnabled,
+    isAvailable: () => true,
   },
   {
     id: 'speakFacing',

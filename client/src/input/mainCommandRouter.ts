@@ -49,15 +49,15 @@ export type MainModeCommand =
 /**
  * Maps raw key events to a semantic command for main mode handling.
  */
-export function resolveMainModeCommand(code: string, shiftKey: boolean, hrtfEnabled = false): MainModeCommand | null {
+export function resolveMainModeCommand(code: string, shiftKey: boolean): MainModeCommand | null {
   if (code === 'KeyN') return shiftKey ? null : 'editNickname';
   if (code === 'KeyM') return shiftKey ? 'toggleOutputMode' : 'toggleMute';
   if (code === 'Digit1') return shiftKey ? 'toggleLoopback' : 'toggleVoiceLayer';
   if (code === 'Digit2') return shiftKey ? null : 'toggleItemLayer';
   if (code === 'Digit3') return shiftKey ? null : 'toggleMediaLayer';
   if (code === 'Digit4') return shiftKey ? 'toggleHrtf' : 'toggleWorldLayer';
-  if (code === 'KeyQ') return !shiftKey && hrtfEnabled ? 'turnLeft' : null;
-  if (code === 'KeyE') return shiftKey ? 'openEffectSelect' : hrtfEnabled ? 'turnRight' : null;
+  if (code === 'KeyQ') return shiftKey ? null : 'turnLeft';
+  if (code === 'KeyE') return shiftKey ? 'openEffectSelect' : 'turnRight';
   if (code === 'Equal') return shiftKey ? 'effectValueUp' : 'masterVolumeUp';
   if (code === 'Minus') return shiftKey ? 'effectValueDown' : 'masterVolumeDown';
   if (code === 'NumpadAdd') return 'masterVolumeUp';

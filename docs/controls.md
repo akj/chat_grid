@@ -17,7 +17,7 @@ This document is the authoritative keymap for the client.
 
 ### Movement
 - `Arrow Keys`: In standard mode, move using compass directions. In HRTF mode, `ArrowUp` moves forward, `ArrowDown` moves backward, and `ArrowLeft`/`ArrowRight` strafe relative to your facing; moves advance at most one square per axis. Arrows do not change facing.
-- `Q` / `E` (HRTF): Turn facing left/right by 45 degrees
+- `Q` / `E`: Turn facing left/right by 45 degrees in standard or HRTF mode
 - `Shift+K`, `Applications`, or `Shift+F10`: Open the command palette in supported modes
 - `?`: Open help viewer
 - `C`: Speak coordinates and any walls bordering the current square

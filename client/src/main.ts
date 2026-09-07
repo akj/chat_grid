@@ -2001,7 +2001,6 @@ function toggleOutputModeCommand(): void {
 }
 
 function turnCommand(direction: 'left' | 'right'): void {
-  if (audio.getSpatialMode() !== 'hrtf') return;
   signaling.send({ type: 'turn', direction });
 }
 
@@ -2366,7 +2365,6 @@ function getAvailableCommandPaletteEntriesForMode(mode: GameMode): Array<Command
   if (mode === 'normal') {
     const descriptors = getAvailableMainModeCommands({
       voiceSendAllowed: authController.getVoiceSendAllowed(),
-      hrtfEnabled: audio.getSpatialMode() === 'hrtf',
       mainHelpAvailable: mainHelpViewerLines.length > 0,
       hasAdminActions: getAvailableAdminActions().length > 0,
       hasWorldBuilder: authController.hasPermission('world.structure.edit'),
@@ -2433,7 +2431,7 @@ function handleNormalModeInput(code: string, shiftKey: boolean): void {
   if (code !== 'Escape' && pendingEscapeDisconnect) {
     pendingEscapeDisconnect = false;
   }
-  const command = resolveMainModeCommand(code, shiftKey, audio.getSpatialMode() === 'hrtf');
+  const command = resolveMainModeCommand(code, shiftKey);
   if (!command) return;
   mainModeCommandHandlers[command]();
 }

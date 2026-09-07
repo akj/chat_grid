@@ -88,7 +88,8 @@ export function configureSpatialAudio(
   context: AudioContext, mode: SpatialMode, outputMode: SpatialOutputMode, facingDeg: number,
 ): void {
   const scene = sceneFor(context);
-  const heading = normalizeDegrees(facingDeg);
+  // Standard audio stays compass-aligned; the caller retains the actual player heading.
+  const heading = mode === 'hrtf' ? normalizeDegrees(facingDeg) : 0;
   if (scene.mode === mode && scene.outputMode === outputMode && scene.facingDeg === heading) return;
   const angle = heading * Math.PI / 180;
   const listener = context.listener;

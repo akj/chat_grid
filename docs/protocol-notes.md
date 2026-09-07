@@ -25,7 +25,7 @@ This is a behavior guide for packet semantics beyond raw schemas.
 - `admin_user_ban` / `admin_user_unban`: disable/enable user account.
 - `admin_user_delete`: permanently delete target account.
 - `update_position`: client movement intent with `x`, `y`, and `z`; server enforces bounds, wall crossings, rate policy, and an unchanged floor. Movement does not change the server-owned facing.
-- `turn`: request a validated 45-degree relative turn with `{ "type": "turn", "direction": "left" | "right" }`; the server persists the resulting facing and republishes the canonical position.
+- `turn`: request a validated 45-degree relative turn in either audio mode with `{ "type": "turn", "direction": "left" | "right" }`; the server persists the resulting facing and republishes the canonical position.
 - `update_facing`: retained absolute-facing packet for one of the eight headings with `facingDeg` in 45-degree steps. The server validates the heading and republishes the canonical position.
 - `teleport_complete`: client signals an `x`, `y`, `z` teleport landing; server rejects direct floor changes and rebroadcasts the spatial cue.
 - `update_nickname`: nickname change request (server enforces uniqueness).
