@@ -17,6 +17,7 @@ function setupRemoteMovement() {
     acousticZoneId: 'floor:0',
   });
   const playWorldSound = vi.fn();
+  const updateStatus = vi.fn();
   const peerManager = {
     ensurePeer: vi.fn(),
     setPeerPosition: vi.fn(),
@@ -27,6 +28,7 @@ function setupRemoteMovement() {
     refreshAcousticModel: vi.fn(),
     randomFootstepUrl: () => '/sounds/step-1.ogg',
     playWorldSound,
+    updateStatus,
   };
   const deps = new Proxy(provided, {
     get(target, property, receiver) {
@@ -37,9 +39,53 @@ function setupRemoteMovement() {
   return {
     handler: createOnMessageHandler(deps),
     playWorldSound,
+    updateStatus,
     state,
   };
 }
+
+describe('local facing announcements', () => {
+  it('announces a confirmed local facing change as the compass direction', async () => {
+    const { handler, updateStatus } = setupRemoteMovement();
+
+    await handler({
+      type: 'update_position',
+      id: 'self',
+      x: 4,
+      y: 4,
+      z: 0,
+      facingDeg: 90,
+      acousticZoneId: 'elevator:car-1',
+    });
+
+    expect(updateStatus).toHaveBeenCalledWith('east');
+  });
+
+  it('does not announce unchanged local facing or remote facing updates', async () => {
+    const { handler, updateStatus } = setupRemoteMovement();
+
+    await handler({
+      type: 'update_position',
+      id: 'self',
+      x: 4,
+      y: 4,
+      z: 0,
+      facingDeg: 0,
+      acousticZoneId: 'elevator:car-1',
+    });
+    await handler({
+      type: 'update_position',
+      id: 'peer-1',
+      x: 4,
+      y: 4,
+      z: 0,
+      facingDeg: 90,
+      acousticZoneId: 'floor:0',
+    });
+
+    expect(updateStatus).not.toHaveBeenCalled();
+  });
+});
 
 describe('remote movement audio', () => {
   it('routes footsteps with the authoritative peer acoustic zone', async () => {

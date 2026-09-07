@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { configureSpatialAudio, createSpatialPanner, disconnectSpatialPanner, resolveSpatialMix, updateSpatialPanner } from './spatial';
+import { configureSpatialAudio, createSpatialPanner, disconnectSpatialPanner, resolveSpatialMix, SPATIAL_TIME_CONSTANT_SECONDS, updateSpatialPanner } from './spatial';
 
 function param(initial = 0) {
   return { value: initial, setTargetAtTime: vi.fn(function (this: { value: number }, value: number) { this.value = value; }) };
@@ -32,58 +32,61 @@ describe('shared spatial renderer', () => {
     expect([panner.positionX.value, panner.positionY.value, panner.positionZ.value]).toEqual([4, 3, -2]);
   });
 
-  it('rotates only the HRTF listener and resets standard audio to north', () => {
+  it.each([0, 45, 90, 135, 180, 225, 270, 315])('rotates an east source smoothly for heading %s', (heading) => {
     const ctx = context();
     const panner = createSpatialPanner(ctx);
-    updateSpatialPanner(panner, resolveSpatialMix({ dx: 5, dy: 0, range: 15 }));
-    configureSpatialAudio(ctx, 'hrtf', 'stereo', 90);
-    expect(ctx.listener.forwardX.value).toBeCloseTo(1);
-    expect(ctx.listener.forwardZ.value).toBeCloseTo(0);
+    const mix = resolveSpatialMix({ dx: 5, dy: 0, range: 15 })!;
+    updateSpatialPanner(panner, mix);
+    configureSpatialAudio(ctx, 'hrtf', 'stereo', heading);
+    const angle = heading * Math.PI / 180;
+    expect(panner.positionX.value).toBeCloseTo(5 * Math.cos(angle));
+    expect(panner.positionZ.value).toBeCloseTo(-5 * Math.sin(angle));
+    expect(panner.positionX.setTargetAtTime).toHaveBeenLastCalledWith(
+      expect.any(Number), ctx.currentTime, SPATIAL_TIME_CONSTANT_SECONDS,
+    );
+    expect(ctx.listener.forwardX.setTargetAtTime).not.toHaveBeenCalled();
+    configureSpatialAudio(ctx, 'standard', 'stereo', heading);
     expect(panner.positionX.value).toBe(5);
-    configureSpatialAudio(ctx, 'standard', 'stereo', 270);
-    expect(ctx.listener.forwardX.value).toBeCloseTo(0);
-    expect(ctx.listener.forwardZ.value).toBeCloseTo(-1);
-    expect(panner.positionX.value).toBe(5);
+    expect(panner.positionZ.value).toBeCloseTo(0);
   });
 
-  it('centers co-located sounds through turns and restores spatial audio after mono', () => {
+  it('keeps co-located sounds centered throughout turns and restores spatial audio after mono', () => {
     const ctx = context();
-    configureSpatialAudio(ctx, 'hrtf', 'stereo', 90);
     const held = createSpatialPanner(ctx);
     updateSpatialPanner(held, resolveSpatialMix({ dx: 0, dy: 0, range: 15 }));
-    expect(held.positionX.value).toBeCloseTo(1);
-    expect(held.positionZ.value).toBeCloseTo(0);
+    for (const heading of [45, 90, 135, 180, 225, 270, 315, 0]) {
+      configureSpatialAudio(ctx, 'hrtf', 'stereo', heading);
+      expect(held.positionX.value).toBe(0);
+      expect(held.positionZ.value).toBe(-1);
+    }
     const remote = createSpatialPanner(ctx);
     updateSpatialPanner(remote, resolveSpatialMix({ dx: -4, dy: -6, range: 15 }));
     configureSpatialAudio(ctx, 'hrtf', 'mono', 90);
     expect(remote.panningModel).toBe('equalpower');
     expect(remote.channelCount).toBe(1);
-    expect(remote.positionX.value).toBeCloseTo(1);
+    expect(remote.positionX.value).toBe(0);
+    expect(remote.positionZ.value).toBe(-1);
     configureSpatialAudio(ctx, 'hrtf', 'stereo', 90);
     expect(remote.panningModel).toBe('HRTF');
     expect(remote.channelCount).toBe(2);
-    expect(remote.positionX.value).toBe(-4);
-    expect(remote.positionZ.value).toBe(6);
+    expect(remote.positionX.value).toBeCloseTo(6);
+    expect(remote.positionZ.value).toBeCloseTo(4);
   });
 
-  it('supports turning and HRTF changes when the listener only exposes setOrientation', () => {
+  it('smooths turns without requiring listener orientation AudioParams', () => {
     const ctx = context();
     const setOrientation = vi.fn();
     Object.defineProperty(ctx, 'listener', { value: { setOrientation } });
     const panner = createSpatialPanner(ctx);
     updateSpatialPanner(panner, resolveSpatialMix({ dx: 5, dy: 0, range: 15 }));
-
     for (const heading of [0, 90, 180, 270, 45]) {
       expect(() => configureSpatialAudio(ctx, 'hrtf', 'stereo', heading)).not.toThrow();
     }
-    expect(setOrientation).toHaveBeenLastCalledWith(
-      Math.sin(Math.PI / 4), 0, -Math.cos(Math.PI / 4), 0, 1, 0,
-    );
-    expect(() => configureSpatialAudio(ctx, 'hrtf', 'stereo', 45)).not.toThrow();
+    expect(setOrientation).not.toHaveBeenCalled();
+    expect(panner.positionX.value).toBeCloseTo(5 / Math.sqrt(2));
+    expect(panner.positionZ.value).toBeCloseTo(-5 / Math.sqrt(2));
     expect(panner.panningModel).toBe('HRTF');
     expect(createSpatialPanner(ctx).panningModel).toBe('HRTF');
-    configureSpatialAudio(ctx, 'standard', 'stereo', 45);
-    expect(panner.panningModel).toBe('equalpower');
   });
 
   it('stops updating disposed sources', () => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AudioEngine } from './audioEngine';
+import { createSpatialPanner, resolveSpatialMix, updateSpatialPanner } from './spatial';
 
 class FakeAudioContext {
   state = 'running';
@@ -11,6 +12,10 @@ class FakeAudioContext {
     forwardZ: { setTargetAtTime: vi.fn() },
     upX: { value: 0 }, upY: { value: 1 }, upZ: { value: 0 },
   };
+  createPanner() {
+    const param = () => ({ value: 0, setTargetAtTime: vi.fn(function (this: { value: number }, value: number) { this.value = value; }) });
+    return { context: this, positionX: param(), positionY: param(), positionZ: param() };
+  }
   setSinkId = vi.fn(async (_id: string) => undefined);
   createGain() {
     return { gain: { value: 1 }, connect: vi.fn() };
@@ -77,19 +82,22 @@ describe('AudioEngine spatial preferences', () => {
     const audio = new AudioEngine();
     await audio.ensureContext();
     const context = audio.context as unknown as FakeAudioContext;
-    const forwardX = context.listener.forwardX.setTargetAtTime;
+    const panner = createSpatialPanner(audio.context!);
+    updateSpatialPanner(panner, resolveSpatialMix({ dx: 5, dy: 0, range: 15 }));
 
     audio.setListenerFacing(90);
-    expect(forwardX).not.toHaveBeenCalled();
+    expect(panner.positionX.value).toBe(5);
     audio.setSpatialMode('hrtf');
-    expect(forwardX).toHaveBeenLastCalledWith(1, 0, expect.any(Number));
+    expect(panner.positionX.value).toBeCloseTo(0);
+    expect(panner.positionZ.value).toBeCloseTo(-5);
     audio.setSpatialMode('standard');
-    expect(forwardX).toHaveBeenLastCalledWith(0, 0, expect.any(Number));
-    forwardX.mockClear();
+    expect(panner.positionX.value).toBe(5);
     audio.setListenerFacing(225);
-    expect(forwardX).not.toHaveBeenCalled();
+    expect(panner.positionX.value).toBe(5);
     audio.setSpatialMode('hrtf');
-    expect(forwardX).toHaveBeenLastCalledWith(Math.sin(225 * Math.PI / 180), 0, expect.any(Number));
+    expect(panner.positionX.value).toBeCloseTo(-5 / Math.sqrt(2));
+    expect(panner.positionZ.value).toBeCloseTo(5 / Math.sqrt(2));
+    expect(context.listener.forwardX.setTargetAtTime).not.toHaveBeenCalled();
   });
 
   it('loads saved HRTF and keeps accepting facing changes with a method-only listener', async () => {
@@ -112,9 +120,7 @@ describe('AudioEngine spatial preferences', () => {
     expect(() => audio.setSpatialMode('standard')).not.toThrow();
     expect(() => audio.setSpatialMode('hrtf')).not.toThrow();
     expect(audio.getSpatialMode()).toBe('hrtf');
-    expect(setOrientation).toHaveBeenLastCalledWith(
-      Math.sin(Math.PI / 4), 0, -Math.cos(Math.PI / 4), 0, 1, 0,
-    );
+    expect(setOrientation).not.toHaveBeenCalled();
   });
 
   it('applies settings chosen before context creation and retains HRTF through mono', async () => {
@@ -126,7 +132,7 @@ describe('AudioEngine spatial preferences', () => {
     expect(audio.context).toBeNull();
     await audio.ensureContext();
     const context = audio.context as unknown as FakeAudioContext;
-    expect(context.listener.forwardX.setTargetAtTime).toHaveBeenCalledWith(1, 0, expect.any(Number));
+    expect(context.listener.forwardX.setTargetAtTime).not.toHaveBeenCalled();
     expect(audio.toggleOutputMode()).toBe('stereo');
     expect(audio.getSpatialMode()).toBe('hrtf');
   });

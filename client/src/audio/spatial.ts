@@ -74,9 +74,11 @@ export function updateSpatialPanner(panner: PannerNode, mix: SpatialMixResult | 
   if (panner.channelCount !== channelCount) panner.channelCount = channelCount;
   const angle = scene.facingDeg * Math.PI / 180;
   const centered = !mix || (mix.dx === 0 && mix.dy === 0 && mix.dz === 0) || scene.outputMode === 'mono';
-  const x = centered ? Math.sin(angle) : mix.dx;
+  // Keep the native listener fixed and rotate sources into its frame. This uses
+  // the same smoothed AudioParams in every browser, including Firefox.
+  const x = centered ? 0 : mix.dx * Math.cos(angle) - mix.dy * Math.sin(angle);
   const y = centered ? 0 : mix.dz;
-  const z = centered ? -Math.cos(angle) : -mix.dy;
+  const z = centered ? -1 : -(mix.dx * Math.sin(angle) + mix.dy * Math.cos(angle));
   const now = panner.context.currentTime;
   panner.positionX.setTargetAtTime(x, now, SPATIAL_TIME_CONSTANT_SECONDS);
   panner.positionY.setTargetAtTime(y, now, SPATIAL_TIME_CONSTANT_SECONDS);
@@ -91,19 +93,6 @@ export function configureSpatialAudio(
   // Standard audio stays compass-aligned; the caller retains the actual player heading.
   const heading = mode === 'hrtf' ? normalizeDegrees(facingDeg) : 0;
   if (scene.mode === mode && scene.outputMode === outputMode && scene.facingDeg === heading) return;
-  const angle = heading * Math.PI / 180;
-  const listener = context.listener;
-  if (listener.forwardX) {
-    listener.forwardX.setTargetAtTime(Math.sin(angle), context.currentTime, SPATIAL_TIME_CONSTANT_SECONDS);
-    listener.forwardY.setTargetAtTime(0, context.currentTime, SPATIAL_TIME_CONSTANT_SECONDS);
-    listener.forwardZ.setTargetAtTime(-Math.cos(angle), context.currentTime, SPATIAL_TIME_CONSTANT_SECONDS);
-    listener.upX.value = 0;
-    listener.upY.value = 1;
-    listener.upZ.value = 0;
-  } else {
-    // Firefox exposes listener orientation through this method, without the AudioParams.
-    listener.setOrientation(Math.sin(angle), 0, -Math.cos(angle), 0, 1, 0);
-  }
   scene.mode = mode;
   scene.outputMode = outputMode;
   scene.facingDeg = heading;
