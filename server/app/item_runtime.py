@@ -307,10 +307,7 @@ class ItemRuntime:
             await self.send_result(client, False, "add", "Unknown item type.")
             return
         max_items = self.host.max_items_per_user
-        owned_count = sum(
-            1 for owned in self.items.values() if self._owns_item(client, owned)
-        )
-        if owned_count >= max_items:
+        if client.user_id and self._owned_item_count(client.user_id) >= max_items:
             await self.send_result(
                 client,
                 False,
@@ -738,12 +735,34 @@ class ItemRuntime:
             )
             return
         target = self._authenticated_client_for_user(target_user_id)
+        stored_username = (
+            None if target else self.auth_service.get_username_by_id(target_user_id)
+        )
+        if target is None and stored_username is None:
+            await self.send_result(
+                client,
+                False,
+                "transfer",
+                "Target user is not available.",
+                transfer_item.id,
+            )
+            return
+        max_items = self.host.max_items_per_user
+        if self._owned_item_count(target_user_id) >= max_items:
+            await self.send_result(
+                client,
+                False,
+                "transfer",
+                f"That user already owns the maximum of {max_items} items.",
+                transfer_item.id,
+            )
+            return
         target_username = (
             target.username
             if target and target.username
             else target.nickname
             if target
-            else self.auth_service.get_username_by_id(target_user_id) or target_user_id
+            else stored_username or target_user_id
         )
         transfer_item.createdBy = target_user_id
         transfer_item.createdByName = target_username
@@ -1370,6 +1389,11 @@ class ItemRuntime:
         actor_id = client.user_id or client.id
         actor_name = client.username or client.nickname or actor_id
         return actor_id, actor_name
+
+    def _owned_item_count(self, user_id: str) -> int:
+        """Count items owned by one account, for `items.max_items_per_user`."""
+
+        return sum(1 for item in self.items.values() if item.createdBy == user_id)
 
     @staticmethod
     def _owns_item(client: ClientConnection, item: WorldItem) -> bool:

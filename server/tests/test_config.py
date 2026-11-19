@@ -29,7 +29,7 @@ def test_load_config_defaults_when_path_none() -> None:
     assert (limits.chat_messages, limits.chat_window_ms) == (5, 5_000)
     assert (limits.piano_notes, limits.piano_window_ms) == (40, 1_000)
     assert (limits.item_changes, limits.item_window_ms) == (10, 10_000)
-    assert (limits.item_updates, limits.item_update_window_ms) == (30, 1_000)
+    assert (limits.item_updates, limits.item_update_window_ms) == (60, 1_000)
 
 
 def test_load_config_requires_tls_when_insecure_disabled(tmp_path: Path) -> None:

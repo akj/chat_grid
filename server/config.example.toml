@@ -105,5 +105,5 @@ piano_window_ms = 1000
 item_changes = 10
 item_window_ms = 10000
 # item_update has its own budget; property editing sends one per arrow-key press.
-item_updates = 30
+item_updates = 60
 item_update_window_ms = 1000

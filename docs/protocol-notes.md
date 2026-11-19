@@ -177,8 +177,8 @@ This is a behavior guide for packet semantics beyond raw schemas.
 - Server rate-limits each connection in fixed windows configured under `[rate_limits]`:
   - `chat_message`: default 5 per 5 seconds, including chat commands. Extra messages are not broadcast; the sender gets one system `chat_message`: "You are sending messages too quickly. Please wait a moment."
   - `item_piano_note`: default 40 note-ons per second. Extra notes are dropped without a reply. A note-off that releases a key the sender is holding always passes, so listeners are not left with stuck notes; a note-off for a key the server never started is dropped.
-  - `item_add` and `item_delete` share one budget, default 10 per 10 seconds. `item_update` has its own budget, default 30 per second, because property editing sends one update per arrow-key press. Extra requests get a failed `item_action_result` for that action: "You are changing items too quickly. Please wait a moment."
-- `item_add` is rejected with a failed `item_action_result` once the user owns `items.max_items_per_user` items (default `500`, counted by `createdBy`).
+  - `item_add` and `item_delete` share one budget, default 10 per 10 seconds. `item_update` has its own budget, default 60 per second, because property editing sends one update per arrow-key press. Extra requests get a failed `item_action_result` for that action: "You are changing items too quickly. Please wait a moment."
+- `item_add` is rejected with a failed `item_action_result` once the user owns `items.max_items_per_user` items (default `500`, counted by `createdBy`). `item_transfer` is rejected when the target account does not exist or already owns that many.
 - Client validates incoming packet shapes and applies runtime behavior.
 - Server is authoritative for role/permission checks on every privileged packet.
 - `voice.send` permission changes are pushed at runtime via `auth_permissions`.

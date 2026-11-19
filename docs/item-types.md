@@ -6,8 +6,8 @@ This is behavior-focused documentation for item types and their defaults.
 
 - Items are server-authoritative.
 - A user may carry up to `items.max_carried_items` items (default `2`, positive integer in server config). Pickup permissions still apply; reaching the limit rejects further pickups without changing held items.
-- A user may own up to `items.max_items_per_user` items (default `500`). Placing another item is rejected until they delete one. Ownership transfers are not blocked by this limit.
-- Adding and deleting items share a per-connection rate limit (default 10 per 10 seconds); edits have their own limit (default 30 per second). Both are under `[rate_limits]` in server config.
+- A user may own up to `items.max_items_per_user` items (default `500`). Placing another item is rejected until they delete one, and transfers to a user already at the limit are rejected. Transfers must name an existing account.
+- Adding and deleting items share a per-connection rate limit (default 10 per 10 seconds); edits have their own limit (default 60 per second). Both are under `[rate_limits]` in server config.
 - All held items follow movement, teleport, and elevator travel, and drop at the final tile on disconnect. Ownership is unchanged.
 - Use, secondary use, edit, inspect, and management offer held items alongside items on the current square.
 - “Hand to user” moves a held item without changing ownership. Recipients must be online, on the same floor within five squares (including diagonals), have a free carrying slot, and have pickup permission for that item.

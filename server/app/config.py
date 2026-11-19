@@ -127,7 +127,7 @@ class RateLimitsConfigSection(BaseModel):
     item_changes: int = Field(default=10, gt=0)
     item_window_ms: int = Field(default=10_000, gt=0)
     # Property editing sends one update per arrow-key press, so allow key repeat.
-    item_updates: int = Field(default=30, gt=0)
+    item_updates: int = Field(default=60, gt=0)
     item_update_window_ms: int = Field(default=1_000, gt=0)
 
 

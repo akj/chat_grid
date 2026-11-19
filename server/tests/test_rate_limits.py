@@ -268,3 +268,34 @@ async def test_item_add_rejected_at_per_user_item_cap(make_world) -> None:
     result = world.transport.last_packet_of_type(other, ItemActionResultPacket)
     assert (result.action, result.ok) == ("add", True)
     assert len(server.item_service.items) == 4
+
+
+@pytest.mark.asyncio
+async def test_item_transfer_cannot_bypass_the_item_cap(make_world) -> None:
+    world = make_world(max_items_per_user=1)
+    server = world.server
+    owner = world.join("owner", x=5, y=6, user_id="owner-user")
+    full = world.join("full", x=9, y=9, user_id="full-user")
+    server.item_service.add_item(server.item_service.default_item(full, "dice"))
+    item = server.item_service.default_item(owner, "dice")
+    item.x, item.y = owner.x, owner.y
+    server.item_service.add_item(item)
+
+    for target_user_id in ("no-such-user", "full-user"):
+        await server._handle_message(
+            owner,
+            json.dumps(
+                {
+                    "type": "item_transfer",
+                    "itemId": item.id,
+                    "targetUserId": target_user_id,
+                }
+            ),
+        )
+
+    results = world.transport.packets_of_type(owner, ItemActionResultPacket)
+    assert [(result.action, result.ok, result.message) for result in results] == [
+        ("transfer", False, "Target user is not available."),
+        ("transfer", False, "That user already owns the maximum of 1 items."),
+    ]
+    assert item.createdBy == "owner-user"
