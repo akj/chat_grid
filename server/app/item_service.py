@@ -11,6 +11,7 @@ from pathlib import Path
 from .client import ClientConnection
 from .item_catalog import get_item_definition
 from .models import PersistedWorldItem, WorldItem
+from .state_files import read_state_text, set_aside_unreadable, write_json_atomic
 
 LOGGER = logging.getLogger("chgrid.server")
 
@@ -132,11 +133,12 @@ class ItemService:
         if not self.state_file:
             return
         try:
-            if not self.state_file.exists():
+            text = read_state_text(self.state_file)
+            if text is None:
                 return
-            raw = json.loads(self.state_file.read_text(encoding="utf-8"))
+            raw = json.loads(text)
             if not isinstance(raw, list):
-                return
+                raise ValueError("Item state must be a list.")
             loaded: dict[str, WorldItem] = {}
             for entry in raw:
                 persisted = PersistedWorldItem.model_validate(entry)
@@ -202,9 +204,8 @@ class ItemService:
                 "loaded %d persisted items from %s", len(self.items), self.state_file
             )
         except Exception as exc:
-            LOGGER.warning(
-                "failed to load persisted item state from %s: %s", self.state_file, exc
-            )
+            if not set_aside_unreadable(self.state_file, exc):
+                self.state_file = None
 
     def load_piano_songs(self) -> None:
         """Load persisted piano song registry used by piano items."""
@@ -212,17 +213,18 @@ class ItemService:
         if not self.piano_songs_file:
             return
         try:
-            if not self.piano_songs_file.exists():
+            text = read_state_text(self.piano_songs_file)
+            if text is None:
                 return
-            raw = json.loads(self.piano_songs_file.read_text(encoding="utf-8"))
+            raw = json.loads(text)
             if not isinstance(raw, dict):
-                return
+                raise ValueError("Piano song state must be an object.")
             loaded: dict[str, dict] = {}
             for song_id, payload in raw.items():
                 if not isinstance(song_id, str) or not song_id.strip():
-                    continue
+                    raise ValueError("Piano song ids must be non-empty text.")
                 if not isinstance(payload, dict):
-                    continue
+                    raise ValueError(f"Piano song {song_id} must be an object.")
                 loaded[song_id] = payload
             self.piano_songs = loaded
             LOGGER.info(
@@ -231,9 +233,8 @@ class ItemService:
                 self.piano_songs_file,
             )
         except Exception as exc:
-            LOGGER.warning(
-                "failed to load piano songs from %s: %s", self.piano_songs_file, exc
-            )
+            if not set_aside_unreadable(self.piano_songs_file, exc):
+                self.piano_songs_file = None
 
     def save_state(self) -> None:
         """Persist instance-only item data to configured state file."""
@@ -241,7 +242,6 @@ class ItemService:
         if not self.state_file:
             return
         try:
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
             payload = [
                 PersistedWorldItem(
                     id=item.id,
@@ -262,10 +262,7 @@ class ItemService:
                 ).model_dump(exclude_none=True)
                 for item in self.items.values()
             ]
-            self.state_file.write_text(
-                json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
-                encoding="utf-8",
-            )
+            write_json_atomic(self.state_file, payload)
         except Exception as exc:
             LOGGER.warning(
                 "failed to persist item state to %s: %s", self.state_file, exc
@@ -277,11 +274,7 @@ class ItemService:
         if not self.piano_songs_file:
             return
         try:
-            self.piano_songs_file.parent.mkdir(parents=True, exist_ok=True)
-            self.piano_songs_file.write_text(
-                json.dumps(self.piano_songs, ensure_ascii=True, separators=(",", ":")),
-                encoding="utf-8",
-            )
+            write_json_atomic(self.piano_songs_file, self.piano_songs)
         except Exception as exc:
             LOGGER.warning(
                 "failed to persist piano songs to %s: %s", self.piano_songs_file, exc

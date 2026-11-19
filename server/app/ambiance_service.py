@@ -5,10 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 import json
 import logging
-import os
 from pathlib import Path
 import re
-import tempfile
 import uuid
 from urllib.parse import quote
 
@@ -16,6 +14,7 @@ from pydantic import ValidationError
 
 from .client import ClientConnection
 from .models import AmbianceRegion, AmbianceType
+from .state_files import read_state_text, set_aside_unreadable, write_json_atomic
 
 LOGGER = logging.getLogger("chgrid.server.ambiances")
 
@@ -252,33 +251,15 @@ class AmbianceService:
 
         if self.state_file is None:
             return
-        temp_name: str | None = None
         try:
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
             payload = [
                 region.model_dump(mode="json") for region in self.ambiances.values()
             ]
-            fd, temp_name = tempfile.mkstemp(
-                prefix=f".{self.state_file.name}.",
-                suffix=".tmp",
-                dir=self.state_file.parent,
-            )
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=True, separators=(",", ":"))
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_name, self.state_file)
-            temp_name = None
+            write_json_atomic(self.state_file, payload)
         except Exception as exc:
             LOGGER.warning(
                 "failed to persist ambiances to %s: %s", self.state_file, exc
             )
-        finally:
-            if temp_name is not None:
-                try:
-                    Path(temp_name).unlink()
-                except OSError:
-                    pass
 
     def load_state(self) -> None:
         """Load a valid region list transactionally, retaining missing assets."""
@@ -286,9 +267,10 @@ class AmbianceService:
         if self.state_file is None:
             return
         try:
-            if not self.state_file.exists():
+            text = read_state_text(self.state_file)
+            if text is None:
                 return
-            raw = json.loads(self.state_file.read_text(encoding="utf-8"))
+            raw = json.loads(text)
             if not isinstance(raw, list):
                 raise AmbianceError("Ambiance state must be a list.")
             loaded: dict[str, AmbianceRegion] = {}
@@ -301,7 +283,8 @@ class AmbianceService:
             self.ambiances = loaded
             LOGGER.info("loaded %d ambiances from %s", len(loaded), self.state_file)
         except Exception as exc:
-            LOGGER.warning("failed to load ambiances from %s: %s", self.state_file, exc)
+            if not set_aside_unreadable(self.state_file, exc):
+                self.state_file = None
 
     def _get(self, ambiance_id: str) -> AmbianceRegion:
         """Return one region or raise a mutation-friendly error."""
