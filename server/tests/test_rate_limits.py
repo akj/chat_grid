@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 
 import pytest
 
@@ -298,4 +299,40 @@ async def test_item_transfer_cannot_bypass_the_item_cap(make_world) -> None:
         ("transfer", False, "Target user is not available."),
         ("transfer", False, "That user already owns the maximum of 1 items."),
     ]
+    assert item.createdBy == "owner-user"
+
+
+@pytest.mark.asyncio
+async def test_item_transfer_counts_an_account_once_however_its_id_is_spelled(
+    make_world,
+) -> None:
+    world = make_world(max_items_per_user=1)
+    server = world.server
+    owner = world.join("owner", x=5, y=6, user_id="owner-user")
+    account_id = server.auth_service.register(
+        f"full_{uuid4().hex[:8]}", "password123"
+    ).user.id
+    held = server.item_service.default_item(owner, "dice")
+    held.createdBy = account_id
+    server.item_service.add_item(held)
+    item = server.item_service.default_item(owner, "dice")
+    item.x, item.y = owner.x, owner.y
+    server.item_service.add_item(item)
+
+    await server._handle_message(
+        owner,
+        json.dumps(
+            {
+                "type": "item_transfer",
+                "itemId": item.id,
+                "targetUserId": f"0{account_id}",
+            }
+        ),
+    )
+
+    result = world.transport.last_packet_of_type(owner, ItemActionResultPacket)
+    assert (result.ok, result.message) == (
+        False,
+        "That user already owns the maximum of 1 items.",
+    )
     assert item.createdBy == "owner-user"

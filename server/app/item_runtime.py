@@ -725,15 +725,6 @@ class ItemRuntime:
                 transfer_item.id,
             )
             return
-        if transfer_item.createdBy == target_user_id:
-            await self.send_result(
-                client,
-                False,
-                "transfer",
-                "Item already belongs to that user.",
-                transfer_item.id,
-            )
-            return
         target = self._authenticated_client_for_user(target_user_id)
         stored_username = (
             None if target else self.auth_service.get_username_by_id(target_user_id)
@@ -744,6 +735,18 @@ class ItemRuntime:
                 False,
                 "transfer",
                 "Target user is not available.",
+                transfer_item.id,
+            )
+            return
+        # Account lookup accepts any spelling of the numeric id; store the
+        # canonical one so ownership checks and the item cap see one owner.
+        target_user_id = str(int(target_user_id)) if target is None else target_user_id
+        if transfer_item.createdBy == target_user_id:
+            await self.send_result(
+                client,
+                False,
+                "transfer",
+                "Item already belongs to that user.",
                 transfer_item.id,
             )
             return
