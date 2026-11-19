@@ -228,3 +228,35 @@ def test_symlinked_state_file_keeps_its_link(
     assert len(reloaded.server.structure_service.structures) == 1
     assert len(reloaded.server.ambiance_service.ambiances) == 1
     assert len(reloaded.server.item_service.piano_songs) == 1
+
+
+def test_unreadable_symlinked_state_file_is_set_aside_at_its_target(
+    make_grid: Callable[[], World], tmp_path: Path
+) -> None:
+    volume = tmp_path / "volume"
+    volume.mkdir()
+    contents = UNREADABLE_CONTENTS["truncated"]
+    (volume / "items.json").write_text(contents, encoding="utf-8")
+    (tmp_path / "items.json").symlink_to(volume / "items.json")
+
+    world = make_grid()
+    change_everything(world)
+    save_everything(world)
+
+    assert (tmp_path / "items.json").is_symlink()
+    kept = set_aside_copies(volume, "items.json")
+    assert [path.read_text(encoding="utf-8") for path in kept] == [contents]
+    assert len(make_grid().server.item_service.items) == 1
+
+
+def test_save_through_a_link_to_a_missing_directory_creates_nothing(
+    make_grid: Callable[[], World], tmp_path: Path
+) -> None:
+    unmounted = tmp_path / "volume" / "state"
+    (tmp_path / "items.json").symlink_to(unmounted / "items.json")
+
+    world = make_grid()
+    change_everything(world)
+    save_everything(world)
+
+    assert not (tmp_path / "volume").exists()

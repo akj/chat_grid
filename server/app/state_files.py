@@ -28,8 +28,8 @@ def write_json_atomic(path: Path, payload: object) -> None:
     is removed.
     """
 
-    path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
+    path = Path(os.path.realpath(path))
     fd, temp_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
@@ -62,11 +62,13 @@ def set_aside_unreadable(path: Path, error: Exception) -> bool:
     """Rename a state file that failed to load so later saves cannot replace it.
 
     The file keeps its name with an `.unreadable-<UTC time>` suffix next to the
-    original, where an admin can inspect or restore it. Returns False when
-    `path` is not a regular file or cannot be renamed; the caller must then
-    stop saving to `path` for this run, or the next save would replace it.
+    original, where an admin can inspect or restore it. A symlinked `path`
+    keeps its link and its target is set aside. Returns False when `path` is
+    not a regular file or cannot be renamed; the caller must then stop saving
+    to `path` for this run, or the next save would replace it.
     """
 
+    path = Path(os.path.realpath(path))
     try:
         regular_file = path.is_file()
     except OSError:
