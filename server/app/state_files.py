@@ -23,10 +23,12 @@ def write_json_atomic(path: Path, payload: object) -> None:
 
     The JSON is written and synced to a temporary file in the same directory,
     then renamed over `path`, so a crash at any point leaves either the old
-    file or the complete new one. Errors propagate after the temporary file is
-    removed.
+    file or the complete new one. A symlinked `path` keeps its link: the file
+    it points to is the one replaced. Errors propagate after the temporary file
+    is removed.
     """
 
+    path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent

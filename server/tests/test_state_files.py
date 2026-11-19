@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -62,7 +63,7 @@ def change_everything(world: World) -> None:
     server.item_service.add_item(server.item_service.default_item(builder, "dice"))
     server.structure_service.add_wall(builder, preset_id="brick", direction="north")
     server.ambiance_service.add_ambiance(builder)
-    server.item_service.piano_songs[f"song-{edit}"] = {"notes": []}
+    server.item_service.piano_songs[f"song-{uuid.uuid4().hex}"] = {"notes": []}
 
 
 def set_aside_copies(directory: Path, name: str) -> list[Path]:
@@ -206,3 +207,24 @@ def test_state_directory_without_access_starts_without_saving(
 
     assert {name: (state_dir / name).read_bytes() for name in STATE_FILES} == before
     assert sorted(path.name for path in state_dir.iterdir()) == sorted(STATE_FILES)
+
+
+def test_symlinked_state_file_keeps_its_link(
+    make_grid: Callable[[], World], tmp_path: Path
+) -> None:
+    volume = tmp_path / "volume"
+    volume.mkdir()
+    for name in STATE_FILES:
+        (volume / name).write_text("[]" if name != "piano_songs.json" else "{}")
+        (tmp_path / name).symlink_to(volume / name)
+
+    world = make_grid()
+    change_everything(world)
+    save_everything(world)
+
+    assert all((tmp_path / name).is_symlink() for name in STATE_FILES)
+    reloaded = make_grid()
+    assert len(reloaded.server.item_service.items) == 1
+    assert len(reloaded.server.structure_service.structures) == 1
+    assert len(reloaded.server.ambiance_service.ambiances) == 1
+    assert len(reloaded.server.item_service.piano_songs) == 1
