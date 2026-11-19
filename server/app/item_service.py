@@ -11,7 +11,7 @@ from pathlib import Path
 from .client import ClientConnection
 from .item_catalog import get_item_definition
 from .models import PersistedWorldItem, WorldItem
-from .state_files import set_aside_unreadable, write_json_atomic
+from .state_files import read_state_text, set_aside_unreadable, write_json_atomic
 
 LOGGER = logging.getLogger("chgrid.server")
 
@@ -133,9 +133,10 @@ class ItemService:
         if not self.state_file:
             return
         try:
-            if not self.state_file.exists():
+            text = read_state_text(self.state_file)
+            if text is None:
                 return
-            raw = json.loads(self.state_file.read_text(encoding="utf-8"))
+            raw = json.loads(text)
             if not isinstance(raw, list):
                 raise ValueError("Item state must be a list.")
             loaded: dict[str, WorldItem] = {}
@@ -212,9 +213,10 @@ class ItemService:
         if not self.piano_songs_file:
             return
         try:
-            if not self.piano_songs_file.exists():
+            text = read_state_text(self.piano_songs_file)
+            if text is None:
                 return
-            raw = json.loads(self.piano_songs_file.read_text(encoding="utf-8"))
+            raw = json.loads(text)
             if not isinstance(raw, dict):
                 raise ValueError("Piano song state must be an object.")
             loaded: dict[str, dict] = {}

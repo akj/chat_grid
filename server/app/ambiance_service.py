@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from .client import ClientConnection
 from .models import AmbianceRegion, AmbianceType
-from .state_files import set_aside_unreadable, write_json_atomic
+from .state_files import read_state_text, set_aside_unreadable, write_json_atomic
 
 LOGGER = logging.getLogger("chgrid.server.ambiances")
 
@@ -267,9 +267,10 @@ class AmbianceService:
         if self.state_file is None:
             return
         try:
-            if not self.state_file.exists():
+            text = read_state_text(self.state_file)
+            if text is None:
                 return
-            raw = json.loads(self.state_file.read_text(encoding="utf-8"))
+            raw = json.loads(text)
             if not isinstance(raw, list):
                 raise AmbianceError("Ambiance state must be a list.")
             loaded: dict[str, AmbianceRegion] = {}

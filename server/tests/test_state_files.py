@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from app.item_service import ItemService
-
 from .conftest import World
 
 STATE_FILES = ["items.json", "structures.json", "ambiances.json", "piano_songs.json"]
@@ -172,17 +170,39 @@ def test_state_path_that_is_a_directory_is_left_in_place(
     assert (runtime / "chatgrid.db").read_bytes() == b"accounts"
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
-def test_state_directory_without_access_starts_without_saving(tmp_path: Path) -> None:
-    locked = tmp_path / "locked"
-    locked.mkdir()
-    (locked / "items.json").write_text("[]", encoding="utf-8")
-    locked.chmod(0)
-    try:
-        service = ItemService(state_file=locked / "items.json")
-        service.save_state()
-    finally:
-        locked.chmod(0o700)
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="needs POSIX directory permissions that apply to this user",
+)
+def test_state_directory_without_access_starts_without_saving(
+    make_world, tmp_path: Path
+) -> None:
+    state_dir = tmp_path / "state"
+    sounds_dir = tmp_path / "ambiance-sounds"
+    state_dir.mkdir()
+    sounds_dir.mkdir()
+    (sounds_dir / "city.ogg").write_bytes(b"")
 
-    assert service.state_file is None
-    assert sorted(path.name for path in locked.iterdir()) == ["items.json"]
+    def make_grid() -> World:
+        return make_world(
+            state_file=state_dir / "items.json",
+            auth_db_path=tmp_path / "auth.db",
+            ambiance_sounds_dir=sounds_dir,
+            structure_presets={"brick": {"title": "Brick", "movementBlocked": True}},
+        )
+
+    world = make_grid()
+    change_everything(world)
+    save_everything(world)
+    before = {name: (state_dir / name).read_bytes() for name in STATE_FILES}
+
+    state_dir.chmod(0)
+    try:
+        locked_out = make_grid()
+    finally:
+        state_dir.chmod(0o700)
+    change_everything(locked_out)
+    save_everything(locked_out)
+
+    assert {name: (state_dir / name).read_bytes() for name in STATE_FILES} == before
+    assert sorted(path.name for path in state_dir.iterdir()) == sorted(STATE_FILES)

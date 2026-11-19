@@ -43,6 +43,19 @@ def write_json_atomic(path: Path, payload: object) -> None:
         raise
 
 
+def read_state_text(path: Path) -> str | None:
+    """Return a state file's text, or None when the file does not exist yet.
+
+    Any other error, including denied access, propagates so the caller treats
+    the file as unreadable rather than as a first run.
+    """
+
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
 def set_aside_unreadable(path: Path, error: Exception) -> bool:
     """Rename a state file that failed to load so later saves cannot replace it.
 
@@ -58,8 +71,8 @@ def set_aside_unreadable(path: Path, error: Exception) -> bool:
         regular_file = False
     if not regular_file:
         LOGGER.error(
-            "could not load %s (%s); it is not a regular file, so saving it is "
-            "disabled until restart",
+            "could not load %s (%s) or confirm it is a regular file to set "
+            "aside; saving it is disabled until restart",
             path,
             error,
         )
