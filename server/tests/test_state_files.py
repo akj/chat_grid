@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from app.item_service import ItemService
+
 from .conftest import World
 
 STATE_FILES = ["items.json", "structures.json", "ambiances.json", "piano_songs.json"]
@@ -168,3 +170,19 @@ def test_state_path_that_is_a_directory_is_left_in_place(
 
     assert list(tmp_path.glob("*.unreadable-*")) == []
     assert (runtime / "chatgrid.db").read_bytes() == b"accounts"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_state_directory_without_access_starts_without_saving(tmp_path: Path) -> None:
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "items.json").write_text("[]", encoding="utf-8")
+    locked.chmod(0)
+    try:
+        service = ItemService(state_file=locked / "items.json")
+        service.save_state()
+    finally:
+        locked.chmod(0o700)
+
+    assert service.state_file is None
+    assert sorted(path.name for path in locked.iterdir()) == ["items.json"]

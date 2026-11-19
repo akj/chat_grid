@@ -7,6 +7,7 @@ by the empty state the server falls back to.
 
 from __future__ import annotations
 
+from contextlib import suppress
 import json
 import logging
 from datetime import UTC, datetime
@@ -37,7 +38,8 @@ def write_json_atomic(path: Path, payload: object) -> None:
             os.fsync(handle.fileno())
         os.replace(temp_name, path)
     except BaseException:
-        Path(temp_name).unlink(missing_ok=True)
+        with suppress(OSError):
+            Path(temp_name).unlink(missing_ok=True)
         raise
 
 
@@ -50,7 +52,11 @@ def set_aside_unreadable(path: Path, error: Exception) -> bool:
     stop saving to `path` for this run, or the next save would replace it.
     """
 
-    if not path.is_file():
+    try:
+        regular_file = path.is_file()
+    except OSError:
+        regular_file = False
+    if not regular_file:
         LOGGER.error(
             "could not load %s (%s); it is not a regular file, so saving it is "
             "disabled until restart",
