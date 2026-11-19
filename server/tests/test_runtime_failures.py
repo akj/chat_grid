@@ -8,7 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models import BroadcastChatMessagePacket, ItemUpsertPacket, UserLeftPacket
+from app.models import (
+    BroadcastChatMessagePacket,
+    BroadcastPositionPacket,
+    ItemUpsertPacket,
+    UserLeftPacket,
+)
 
 
 class _ClosedWebsocket:
@@ -38,10 +43,14 @@ async def test_elevator_failure_returns_car_to_idle(
     server, transport = world.server, world.transport
     observer = world.join("observer", x=40, y=40)
     rider = world.join("rider", x=10, y=10, z=0, elevator_id="elevator-1")
+    second = world.join("second", x=10, y=10, z=0, elevator_id="elevator-1")
     elevator = server.item_service.default_item(rider, "elevator")
     elevator.id = "elevator-1"
     elevator.params.update({"currentZ": 0, "targetZ": 40, "state": "moving"})
     server.item_service.add_item(elevator)
+    carried = server.item_service.default_item(second, "dice")
+    carried.carrierId = second.id
+    server.item_service.add_item(carried)
 
     async def immediate_sleep(_seconds: float) -> None:
         return None
@@ -56,6 +65,13 @@ async def test_elevator_failure_returns_car_to_idle(
     assert elevator.params["currentZ"] == 40
     last = transport.packets_of_type(observer, ItemUpsertPacket)[-1]
     assert last.item.params["state"] == "idle"
+    assert (rider.z, second.z, carried.z) == (40, 40, 40)
+    second_positions = [
+        packet
+        for packet in transport.packets_of_type(observer, BroadcastPositionPacket)
+        if packet.id == second.id
+    ]
+    assert second_positions[-1].z == 40
 
 
 async def test_disconnect_announces_departure_when_cleanup_fails(
@@ -76,6 +92,12 @@ async def test_disconnect_announces_departure_when_cleanup_fails(
     carried.carrierId = leaving.id
     server.item_service.add_item(carried)
     monkeypatch.setattr(server.auth_service, "set_last_position", _fail_position_write)
+    last_seen_users: list[str] = []
+    monkeypatch.setattr(
+        server.auth_service,
+        "touch_last_seen",
+        lambda user_id, *_args, **_kwargs: last_seen_users.append(user_id),
+    )
 
     await server._handle_client(websocket)  # type: ignore[arg-type]
 
@@ -84,3 +106,4 @@ async def test_disconnect_announces_departure_when_cleanup_fails(
     chat = transport.packets_of_type(observer, BroadcastChatMessagePacket)
     assert chat[-1].message == "leaving has logged out."
     assert carried.carrierId is None
+    assert last_seen_users == ["42"]

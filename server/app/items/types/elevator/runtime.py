@@ -401,11 +401,25 @@ class ElevatorRuntime:
             )
 
     async def _return_to_idle(self, item_id: str) -> None:
-        """Park a car whose cycle failed at its last landing with the door closed."""
+        """Park a car whose cycle failed at its last landing with the door closed.
+
+        Riders and their carried items are placed at that landing too, since the
+        failure may have left them at a travel height. Positions are broadcast
+        but not saved, because saving may be what failed.
+        """
 
         item = self.callbacks.get_item(item_id)
         if item is None or item.type != "elevator":
             return
+        landing_z = int(item.params.get("currentZ", 0))
+        for rider in tuple(self.callbacks.iter_clients()):
+            if rider.elevator_id != item.id:
+                continue
+            rider.x, rider.y, rider.z = item.x, item.y, landing_z
+            for carried in self.callbacks.find_carried_items(rider.id):
+                carried.x, carried.y, carried.z = rider.x, rider.y, rider.z
+                await self.callbacks.broadcast_item(carried)
+            await self.delivery.broadcast(client_position_packet(rider))
         item.params.update(
             {
                 "targetZ": None,

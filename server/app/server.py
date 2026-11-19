@@ -991,10 +991,15 @@ class SignalingServer:
                     )
                 try:
                     self._persist_client_position(disconnected, force=True)
+                except Exception:
+                    LOGGER.exception(
+                        "disconnect position save failed id=%s", disconnected.id
+                    )
+                try:
                     self._persist_client_last_seen(disconnected, force=True)
                 except Exception:
                     LOGGER.exception(
-                        "disconnect presence save failed id=%s", disconnected.id
+                        "disconnect last-seen save failed id=%s", disconnected.id
                     )
                 if disconnected.user_id:
                     self._last_position_persist_ms_by_user.pop(
