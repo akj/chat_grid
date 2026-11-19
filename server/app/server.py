@@ -34,8 +34,8 @@ from .acoustic_zones import (
     floor_acoustic_zone_id,
 )
 from .ambiance_service import AmbianceError, AmbianceService
-from .client import ClientConnection
-from .config import load_config
+from .client import ClientConnection, RateLimitName
+from .config import RateLimitsConfigSection, load_config
 from .delivery import Delivery, Transport, WebsocketTransport
 from .item_catalog import (
     ITEM_TYPE_EDITABLE_PROPERTIES,
@@ -84,6 +84,9 @@ from .models import (
     ChatMessagePacket,
     ClientPacket,
     FacingDeg,
+    ItemAddPacket,
+    ItemDeletePacket,
+    ItemUpdatePacket,
     LiveKitTokenPacket,
     LiveKitTokenRequestPacket,
     NicknameResultPacket,
@@ -131,6 +134,10 @@ MOVEMENT_TICK_MS = 200
 MOVEMENT_MAX_STEPS_PER_TICK = 1
 POSITION_PERSIST_DEBOUNCE_MS = 5_000
 LAST_SEEN_PERSIST_DEBOUNCE_MS = 30_000
+CHAT_RATE_LIMIT_MESSAGE = "You are sending messages too quickly. Please wait a moment."
+ITEM_CHANGE_RATE_LIMIT_MESSAGE = (
+    "You are changing items too quickly. Please wait a moment."
+)
 AUTH_HASH_MAX_CONCURRENCY = 8
 AUTH_RATE_LIMIT_WINDOW_S = 30.0
 AUTH_RATE_LIMIT_PER_IP = 20
@@ -206,6 +213,8 @@ class SignalingServer:
         *,
         transport: Transport | None = None,
         max_carried_items: int = 2,
+        max_items_per_user: int = 500,
+        rate_limits: RateLimitsConfigSection | None = None,
         ambiance_sounds_dir: Path | None = None,
     ):
         """Initialize runtime state, TLS context, and item service."""
@@ -236,6 +245,16 @@ class SignalingServer:
         if max_carried_items <= 0:
             raise ValueError("max_carried_items must be greater than zero.")
         self.max_carried_items = max_carried_items
+        if max_items_per_user <= 0:
+            raise ValueError("max_items_per_user must be greater than zero.")
+        self.max_items_per_user = max_items_per_user
+        limits = rate_limits or RateLimitsConfigSection()
+        self.rate_limits: dict[RateLimitName, tuple[int, int]] = {
+            "chat": (limits.chat_messages, limits.chat_window_ms),
+            "piano": (limits.piano_notes, limits.piano_window_ms),
+            "item_changes": (limits.item_changes, limits.item_window_ms),
+            "item_updates": (limits.item_updates, limits.item_update_window_ms),
+        }
         self.item_service = ItemService(state_file=state_file)
         structure_state_file = (
             state_file.with_name("structures.json") if state_file else None
@@ -895,6 +914,21 @@ class SignalingServer:
         if requested_delta > remaining:
             return False
         client.movement_window_steps_used += requested_delta
+        return True
+
+    def _consume_rate_limit(
+        self, client: ClientConnection, name: RateLimitName
+    ) -> bool:
+        """Count one action against a per-client fixed window; return whether it is allowed."""
+
+        limit, window_ms = self.rate_limits[name]
+        window_index = self.item_service.now_ms() // window_ms
+        used_window, used = client.rate_limit_windows.get(name, (window_index, 0))
+        if used_window != window_index:
+            used = 0
+        if used >= limit:
+            return False
+        client.rate_limit_windows[name] = (window_index, used + 1)
         return True
 
     @staticmethod
@@ -2432,6 +2466,16 @@ class SignalingServer:
                     ),
                 )
                 return
+            if not self._consume_rate_limit(client, "chat"):
+                await self.delivery.send(
+                    client,
+                    BroadcastChatMessagePacket(
+                        type="chat_message",
+                        message=CHAT_RATE_LIMIT_MESSAGE,
+                        system=True,
+                    ),
+                )
+                return
             if await self._handle_chat_command(client, packet.message):
                 return
             await self.delivery.broadcast(
@@ -2445,6 +2489,27 @@ class SignalingServer:
             )
             return
 
+        if isinstance(packet, ItemAddPacket) and not self._consume_rate_limit(
+            client, "item_changes"
+        ):
+            await self.item_runtime.send_result(
+                client, False, "add", ITEM_CHANGE_RATE_LIMIT_MESSAGE
+            )
+            return
+        if isinstance(packet, ItemDeletePacket) and not self._consume_rate_limit(
+            client, "item_changes"
+        ):
+            await self.item_runtime.send_result(
+                client, False, "delete", ITEM_CHANGE_RATE_LIMIT_MESSAGE, packet.itemId
+            )
+            return
+        if isinstance(packet, ItemUpdatePacket) and not self._consume_rate_limit(
+            client, "item_updates"
+        ):
+            await self.item_runtime.send_result(
+                client, False, "update", ITEM_CHANGE_RATE_LIMIT_MESSAGE, packet.itemId
+            )
+            return
         if await self.item_runtime.handle_packet(client, packet):
             return
 
@@ -2701,5 +2766,7 @@ def run() -> None:
         livekit_api_secret=livekit_api_secret,
         livekit_room_name=config.livekit.room_name,
         max_carried_items=config.items.max_carried_items,
+        max_items_per_user=config.items.max_items_per_user,
+        rate_limits=config.rate_limits,
     )
     asyncio.run(server.start())

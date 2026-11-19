@@ -6,7 +6,7 @@ import asyncio
 import time
 from typing import Literal, Protocol, TypedDict
 
-from ....client import ClientConnection
+from ....client import ClientConnection, RateLimitName
 from ....delivery import Delivery
 from ....item_service import ItemService
 from ....models import (
@@ -63,6 +63,10 @@ class PianoRuntimeHost(Protocol):
     def get_client_by_id(self, client_id: str) -> ClientConnection | None: ...
 
     def client_has_permission(self, client: ClientConnection, key: str) -> bool: ...
+
+    def consume_rate_limit(
+        self, client: ClientConnection, name: RateLimitName
+    ) -> bool: ...
 
     def item_is_on_client_square(
         self, item: WorldItem, client: ClientConnection
@@ -128,9 +132,15 @@ class PianoRuntime:
                 and len(active_keys) >= MAX_ACTIVE_PIANO_KEYS_PER_CLIENT
             ):
                 return
+            if not self.host.consume_rate_limit(client, "piano"):
+                return
             active_keys.add(packet.keyId)
-        else:
+        elif packet.keyId in active_keys:
+            # Releasing a held key is never rate-limited, so listeners cannot be
+            # left with a stuck note.
             active_keys.discard(packet.keyId)
+        elif not self.host.consume_rate_limit(client, "piano"):
+            return
         recording_state = self.recording_state_by_item.get(piano_item.id)
         if (
             recording_state

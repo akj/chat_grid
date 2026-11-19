@@ -11,7 +11,7 @@ from websockets.asyncio.server import ServerConnection
 
 from .auth_service import AuthService
 from .acoustic_zones import client_acoustic_zone_id, floor_acoustic_zone_id
-from .client import ClientConnection
+from .client import ClientConnection, RateLimitName
 from .delivery import Delivery
 from .item_catalog import (
     get_item_definition,
@@ -66,8 +66,13 @@ class ItemRuntimeHost(Protocol):
     delivery: Delivery
     item_service: ItemService
     max_carried_items: int
+    max_items_per_user: int
 
     def _client_has_permission(self, client: ClientConnection, key: str) -> bool: ...
+
+    def _consume_rate_limit(
+        self, client: ClientConnection, name: RateLimitName
+    ) -> bool: ...
 
     def _is_in_bounds(self, x: int, y: int) -> bool: ...
 
@@ -202,6 +207,11 @@ class ItemRuntime:
 
         return self.host._client_has_permission(client, key)
 
+    def consume_rate_limit(self, client: ClientConnection, name: RateLimitName) -> bool:
+        """Count one action against a per-client rate limit; return whether it is allowed."""
+
+        return self.host._consume_rate_limit(client, name)
+
     def request_state_save(self) -> None:
         """Request coalesced persistence after an item mutation."""
 
@@ -295,6 +305,18 @@ class ItemRuntime:
             return
         if not is_known_item_type(packet.itemType):
             await self.send_result(client, False, "add", "Unknown item type.")
+            return
+        max_items = self.host.max_items_per_user
+        owned_count = sum(
+            1 for owned in self.items.values() if self._owns_item(client, owned)
+        )
+        if owned_count >= max_items:
+            await self.send_result(
+                client,
+                False,
+                "add",
+                f"You already own the maximum of {max_items} items. Delete one before placing another.",
+            )
             return
         item = self.item_service.default_item(client, packet.itemType)
         if item.type == "elevator":

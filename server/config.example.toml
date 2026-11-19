@@ -89,3 +89,20 @@ room_name = "chatgrid"
 [items]
 # Maximum number of items one user can carry at once.
 max_carried_items = 2
+# Maximum number of items one user can own; further placements are rejected.
+max_items_per_user = 500
+
+[rate_limits]
+# Per-connection fixed windows. Chat over the limit gets a system notice.
+chat_messages = 5
+chat_window_ms = 5000
+# Piano notes started per window; extra notes are dropped silently.
+# Releasing a held key is never limited, so notes cannot get stuck.
+piano_notes = 40
+piano_window_ms = 1000
+# item_add and item_delete share one budget.
+item_changes = 10
+item_window_ms = 10000
+# item_update has its own budget; property editing sends one per arrow-key press.
+item_updates = 30
+item_update_window_ms = 1000

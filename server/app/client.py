@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 from websockets.asyncio.server import ServerConnection
 
 from .models import FacingDeg
+
+RateLimitName = Literal["chat", "piano", "item_changes", "item_updates"]
 
 
 @dataclass
@@ -34,6 +37,10 @@ class ClientConnection:
     last_seen_at_ms: int = 0
     movement_window_index: int = -1
     movement_window_steps_used: int = 0
+    # Fixed-window state per limit: (window index, actions used in that window).
+    rate_limit_windows: dict[RateLimitName, tuple[int, int]] = field(
+        default_factory=dict
+    )
     world_ready: bool = False
     elevator_id: str | None = None
 

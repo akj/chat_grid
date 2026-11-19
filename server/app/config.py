@@ -114,6 +114,21 @@ class ItemsConfigSection(BaseModel):
     """Authoritative item interaction limits."""
 
     max_carried_items: int = Field(default=2, gt=0)
+    max_items_per_user: int = Field(default=500, gt=0)
+
+
+class RateLimitsConfigSection(BaseModel):
+    """Per-connection fixed-window limits for chat, piano notes, and item edits."""
+
+    chat_messages: int = Field(default=5, gt=0)
+    chat_window_ms: int = Field(default=5_000, gt=0)
+    piano_notes: int = Field(default=40, gt=0)
+    piano_window_ms: int = Field(default=1_000, gt=0)
+    item_changes: int = Field(default=10, gt=0)
+    item_window_ms: int = Field(default=10_000, gt=0)
+    # Property editing sends one update per arrow-key press, so allow key repeat.
+    item_updates: int = Field(default=30, gt=0)
+    item_update_window_ms: int = Field(default=1_000, gt=0)
 
 
 class AppConfig(BaseModel):
@@ -128,6 +143,7 @@ class AppConfig(BaseModel):
     auth: AuthConfigSection = AuthConfigSection()
     livekit: LiveKitConfigSection = LiveKitConfigSection()
     items: ItemsConfigSection = ItemsConfigSection()
+    rate_limits: RateLimitsConfigSection = RateLimitsConfigSection()
 
 
 def load_config(path: Path | None) -> AppConfig:
