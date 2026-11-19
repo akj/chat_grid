@@ -260,3 +260,5 @@ def test_save_through_a_link_to_a_missing_directory_creates_nothing(
     save_everything(world)
 
     assert not (tmp_path / "volume").exists()
+    assert (tmp_path / "items.json").readlink() == unmounted / "items.json"
+    assert list(tmp_path.glob(".items.json.*.tmp")) == []
