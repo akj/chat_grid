@@ -96,7 +96,7 @@ import { ItemBehaviorRegistry } from './items/types/behaviorRegistry';
 import { SettingsStore } from './settings/settingsStore';
 import { createAuthController } from './session/authController';
 import { runConnectFlow, runDisconnectFlow, type ConnectFlowDeps } from './session/connectionFlow';
-import { runReconnectAttempts } from './session/reconnect';
+import { RECONNECT_MAX_ATTEMPTS, runReconnectAttempts } from './session/reconnect';
 import { MediaSession } from './session/mediaSession';
 import { type AudioLayerState } from './types/audio';
 import { setupUiHandlers as setupDomUiHandlers } from './ui/domBindings';
@@ -1646,10 +1646,13 @@ async function reconnectWithRetry(reason: 'heartbeat' | 'socketClose'): Promise<
     const connected = await runReconnectAttempts({
       signal: controller.signal,
       connect: () => connectAttempt(controller),
-      onRetry: (attempt) => pushChatMessage(`Reconnect attempt ${attempt} failed. Retrying in 5 seconds...`),
+      onRetry: (attempt, delayMs) => {
+        const seconds = Math.round(delayMs / 1000);
+        pushChatMessage(`Reconnect attempt ${attempt} failed. Retrying in ${seconds} seconds...`);
+      },
     });
     if (!connected && !controller.signal.aborted) {
-      pushChatMessage('Reconnect failed after 3 attempts. Press Connect to retry.');
+      pushChatMessage(`Reconnect failed after ${RECONNECT_MAX_ATTEMPTS} attempts. Press Connect to retry.`);
       audio.sfxUiCancel();
     }
   } finally {

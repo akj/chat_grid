@@ -108,8 +108,8 @@ Core incoming message effects:
 - If websocket closes unexpectedly, client starts reconnect flow immediately.
 - While running, client also sends heartbeat `ping` every 10 seconds (fallback for silent half-open cases).
 - Two consecutive heartbeat intervals without a `pong` start reconnect flow; one missed interval is tolerated. A received pong resets the miss counter.
-- Reconnect flow waits 5 seconds before each attempt and retries up to 3 times, then asks the user to press Connect.
-- Returning to a visible tab brings a waiting retry forward without exceeding the three-attempt limit.
+- Reconnect flow makes up to 8 attempts, then asks the user to press Connect. The delay before attempt n is min(30 s, 5 s × 2^(n-1)) with ±20% jitter so clients do not retry in lockstep (about 5, 10, 20, then 30 seconds; roughly 3 minutes in total). Each retry message states the next delay.
+- Returning to a visible tab brings a waiting retry forward without exceeding the attempt limit.
 - Each attempt waits for a complete server welcome: socket opening has a 10-second timeout, followed by an 8-second welcome timeout. Saved-session authentication uses the same welcome deadline.
 - Disconnect, logout, and a new manual connection cancel pending retries and connection attempts. Closed, failed, and replaced sockets cannot affect a newer attempt; welcome timers are cleared when their attempt finishes.
 - Receiving welcome completes reconnection before microphone setup, so a microphone permission prompt does not consume another retry.

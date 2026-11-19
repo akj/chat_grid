@@ -191,7 +191,7 @@ This is a behavior guide for packet semantics beyond raw schemas.
 - Heartbeat pings use negative `clientSentAt` ids and are internal (not user-visible ping status).
 - If websocket close is observed unexpectedly, client starts reconnect flow.
 - Two consecutive heartbeat intervals without a `pong` start reconnect flow; a received pong resets the counter.
-- Reconnect flow waits 5 seconds before each attempt and retries up to 3 times before stopping. Returning to a visible tab brings a waiting retry forward; disconnect, logout, and manual Connect cancel recovery.
+- Reconnect flow makes up to 8 attempts before stopping. The delay before attempt n is min(30 s, 5 s × 2^(n-1)) with ±20% jitter (about 5, 10, 20, then 30 seconds; roughly 3 minutes in total), and each retry message states the next delay. Returning to a visible tab brings a waiting retry forward; disconnect, logout, and manual Connect cancel recovery.
 - After reconnect, if `welcome.serverInfo.instanceId` changed, client announces `Server restarted.`
 - Client emits `Connected to server. Version <version>.` on initial `welcome` and
   `Reconnected to server. Version <version>.` after reconnect.

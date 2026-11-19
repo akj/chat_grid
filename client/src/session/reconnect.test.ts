@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runReconnectAttempts } from './reconnect';
+import { RECONNECT_MAX_ATTEMPTS, runReconnectAttempts } from './reconnect';
+
+/** Jitter factor of exactly 1.0, so delays equal the nominal schedule. */
+const noJitter = () => 0.5;
 
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
@@ -18,38 +21,74 @@ afterEach(() => {
 });
 
 describe('runReconnectAttempts', () => {
-  it('waits five seconds before each of exactly three attempts', async () => {
+  it('backs off 5, 10, 20, then 30 seconds across exactly eight attempts', async () => {
     const controller = new AbortController();
     const connect = vi.fn(async () => false);
     const onRetry = vi.fn();
-    const result = runReconnectAttempts({ signal: controller.signal, connect, onRetry });
+    const result = runReconnectAttempts({ signal: controller.signal, connect, onRetry, random: noJitter });
 
-    expect(connect).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(4_999);
-    expect(connect).not.toHaveBeenCalled();
+    const schedule = [5_000, 10_000, 20_000, 30_000, 30_000, 30_000, 30_000, 30_000];
+    expect(RECONNECT_MAX_ATTEMPTS).toBe(schedule.length);
+    for (const [index, delayMs] of schedule.entries()) {
+      await vi.advanceTimersByTimeAsync(delayMs - 1);
+      expect(connect).toHaveBeenCalledTimes(index);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(connect).toHaveBeenCalledTimes(index + 1);
+    }
 
-    await vi.advanceTimersByTimeAsync(1);
-    expect(connect).toHaveBeenCalledTimes(1);
-    expect(onRetry).toHaveBeenCalledWith(1);
-
-    await vi.advanceTimersByTimeAsync(4_999);
-    expect(connect).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(connect).toHaveBeenCalledTimes(2);
-    expect(onRetry).toHaveBeenCalledWith(2);
-
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(connect).toHaveBeenCalledTimes(3);
     await expect(result).resolves.toBe(false);
-    expect(onRetry).toHaveBeenCalledTimes(2);
+    expect(onRetry.mock.calls).toEqual([
+      [1, 10_000],
+      [2, 20_000],
+      [3, 30_000],
+      [4, 30_000],
+      [5, 30_000],
+      [6, 30_000],
+      [7, 30_000],
+    ]);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('scales each delay by a jitter factor between 0.8 and 1.2', async () => {
+    const delaysFor = async (random: () => number): Promise<number[]> => {
+      const onRetry = vi.fn();
+      const result = runReconnectAttempts({
+        signal: new AbortController().signal,
+        connect: async () => false,
+        onRetry,
+        random,
+      });
+      await vi.advanceTimersByTimeAsync(300_000);
+      await expect(result).resolves.toBe(false);
+      return onRetry.mock.calls.map(([, delayMs]) => delayMs as number);
+    };
+
+    expect(await delaysFor(() => 0)).toEqual([8_000, 16_000, 24_000, 24_000, 24_000, 24_000, 24_000]);
+    const highest = await delaysFor(() => 0.999_999);
+    const nominal = [10_000, 20_000, 30_000, 30_000, 30_000, 30_000, 30_000];
+    highest.forEach((delayMs, index) => {
+      expect(delayMs).toBeLessThan(nominal[index] * 1.2);
+      expect(delayMs).toBeGreaterThan(nominal[index] * 1.199);
+    });
+
+    const connect = vi.fn(async () => true);
+    const result = runReconnectAttempts({
+      signal: new AbortController().signal,
+      connect,
+      onRetry: vi.fn(),
+      random: () => 0,
+    });
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(connect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toBe(true);
   });
 
   it('stops immediately after a successful attempt', async () => {
     const controller = new AbortController();
     const connect = vi.fn(async () => true);
     const onRetry = vi.fn();
-    const result = runReconnectAttempts({ signal: controller.signal, connect, onRetry });
+    const result = runReconnectAttempts({ signal: controller.signal, connect, onRetry, random: noJitter });
 
     await vi.advanceTimersByTimeAsync(5_000);
     await expect(result).resolves.toBe(true);
@@ -64,7 +103,7 @@ describe('runReconnectAttempts', () => {
     const controller = new AbortController();
     const connect = vi.fn(async () => false);
     const onRetry = vi.fn();
-    const result = runReconnectAttempts({ signal: controller.signal, connect, onRetry });
+    const result = runReconnectAttempts({ signal: controller.signal, connect, onRetry, random: noJitter });
 
     await vi.advanceTimersByTimeAsync(2_000);
     controller.abort();
@@ -86,7 +125,7 @@ describe('runReconnectAttempts', () => {
       }),
     );
     const onRetry = vi.fn();
-    const result = runReconnectAttempts({ signal: controller.signal, connect, onRetry });
+    const result = runReconnectAttempts({ signal: controller.signal, connect, onRetry, random: noJitter });
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(connect).toHaveBeenCalledOnce();
