@@ -18,8 +18,19 @@ import tempfile
 LOGGER = logging.getLogger("chgrid.server.state_files")
 
 
+def _sync_directory(directory: Path) -> None:
+    """Persist a rename on systems supporting directory file descriptors."""
+
+    if os.name == "posix":
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
 def write_json_atomic(path: Path, payload: object) -> None:
-    """Replace `path` with `payload` as compact JSON, or leave it untouched.
+    """Replace `path` with `payload` as compact JSON, and sync the replacement.
 
     The JSON is written and synced to a temporary file in the same directory,
     then renamed over `path`, so a crash at any point leaves either the old
@@ -39,6 +50,7 @@ def write_json_atomic(path: Path, payload: object) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, path)
+        _sync_directory(path.parent)
     except BaseException:
         with suppress(OSError):
             Path(temp_name).unlink(missing_ok=True)
@@ -85,9 +97,10 @@ def set_aside_unreadable(path: Path, error: Exception) -> bool:
     target = path.with_name(f"{path.name}.unreadable-{stamp}")
     try:
         os.replace(path, target)
+        _sync_directory(target.parent)
     except OSError as rename_error:
         LOGGER.error(
-            "could not load %s (%s) or set it aside (%s); saving it is disabled "
+            "could not load %s (%s) or durably set it aside (%s); saving it is disabled "
             "until restart",
             path,
             error,

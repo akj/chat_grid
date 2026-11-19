@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -262,3 +263,27 @@ def test_save_through_a_link_to_a_missing_directory_creates_nothing(
     assert not (tmp_path / "volume").exists()
     assert (tmp_path / "items.json").readlink() == unmounted / "items.json"
     assert list(tmp_path.glob(".items.json.*.tmp")) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires directory fsync")
+def test_backup_sync_failure_disables_saves(
+    make_grid: Callable[[], World], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "items.json"
+    path.write_text("invalid", encoding="utf-8")
+    real_fsync = os.fsync
+
+    def fail_directory_sync(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("directory sync failed")
+        real_fsync(fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", fail_directory_sync)
+        world = make_grid()
+
+    change_everything(world)
+    save_everything(world)
+    assert not path.exists()
+    (backup,) = set_aside_copies(tmp_path, path.name)
+    assert backup.read_text(encoding="utf-8") == "invalid"
