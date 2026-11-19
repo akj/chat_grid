@@ -411,15 +411,8 @@ class ElevatorRuntime:
         item = self.callbacks.get_item(item_id)
         if item is None or item.type != "elevator":
             return
-        landing_z = int(item.params.get("currentZ", 0))
-        for rider in tuple(self.callbacks.iter_clients()):
-            if rider.elevator_id != item.id:
-                continue
-            rider.x, rider.y, rider.z = item.x, item.y, landing_z
-            for carried in self.callbacks.find_carried_items(rider.id):
-                carried.x, carried.y, carried.z = rider.x, rider.y, rider.z
-                await self.callbacks.broadcast_item(carried)
-            await self.delivery.broadcast(client_position_packet(rider))
+        # Settle all state before the first await: a use() during a broadcast
+        # restarts the cycle task, which would cancel this recovery midway.
         item.params.update(
             {
                 "targetZ": None,
@@ -430,7 +423,23 @@ class ElevatorRuntime:
             }
         )
         self._touch(item)
+        landing_z = int(item.params.get("currentZ", 0))
+        riders = [
+            rider
+            for rider in self.callbacks.iter_clients()
+            if rider.elevator_id == item.id
+        ]
+        carried_items: list[WorldItem] = []
+        for rider in riders:
+            rider.x, rider.y, rider.z = item.x, item.y, landing_z
+            for carried in self.callbacks.find_carried_items(rider.id):
+                carried.x, carried.y, carried.z = rider.x, rider.y, rider.z
+                carried_items.append(carried)
         await self.callbacks.broadcast_item(item)
+        for carried in carried_items:
+            await self.callbacks.broadcast_item(carried)
+        for rider in riders:
+            await self.delivery.broadcast(client_position_packet(rider))
 
     def _touch(self, item: WorldItem) -> None:
         """Mark elevator state changed and schedule persistence."""

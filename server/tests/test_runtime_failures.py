@@ -55,15 +55,39 @@ async def test_elevator_failure_returns_car_to_idle(
     async def immediate_sleep(_seconds: float) -> None:
         return None
 
+    failed = False
+    first_after_failure: list[tuple[str, int]] = []
+
+    def fail_position_write(*_args: object, **_kwargs: object) -> None:
+        nonlocal failed
+        failed = True
+        _fail_position_write()
+
+    record = transport.deliver
+
+    async def deliver(client, packet) -> None:
+        # Recovery yields at its first send; a use() there restarts the cycle,
+        # so the car and riders must already be settled.
+        if failed and not first_after_failure:
+            first_after_failure.append((elevator.params["state"], second.z))
+        await record(client, packet)
+
     monkeypatch.setattr(asyncio, "sleep", immediate_sleep)
-    monkeypatch.setattr(server.auth_service, "set_last_position", _fail_position_write)
+    monkeypatch.setattr(server.auth_service, "set_last_position", fail_position_write)
+    monkeypatch.setattr(transport, "deliver", deliver)
 
     await server.item_runtime.elevator.run_cycle(elevator.id)
+
+    assert first_after_failure == [("idle", 40)]
 
     assert elevator.params["state"] == "idle"
     assert elevator.params["doorOpen"] is False
     assert elevator.params["currentZ"] == 40
-    last = transport.packets_of_type(observer, ItemUpsertPacket)[-1]
+    last = [
+        packet
+        for packet in transport.packets_of_type(observer, ItemUpsertPacket)
+        if packet.item.id == elevator.id
+    ][-1]
     assert last.item.params["state"] == "idle"
     assert (rider.z, second.z, carried.z) == (40, 40, 40)
     second_positions = [
