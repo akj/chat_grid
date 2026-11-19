@@ -97,7 +97,8 @@ max_items_per_user = 500
 chat_messages = 5
 chat_window_ms = 5000
 # Piano notes started per window; extra notes are dropped silently.
-# Releasing a held key is never limited, so notes cannot get stuck.
+# Releasing a held key is never limited, so notes cannot get stuck;
+# releases for notes that were dropped are dropped too.
 piano_notes = 40
 piano_window_ms = 1000
 # item_add and item_delete share one budget.

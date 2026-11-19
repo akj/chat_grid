@@ -132,10 +132,17 @@ async def test_piano_note_ons_over_limit_are_dropped_but_releases_pass(
     assert world.transport.packets_to(sender) == []
 
     now.now_ms += 1_000
-    await note("KeyG", True)
+    await note("KeyG", False)
+    for key_id in ("KeyH", "KeyJ", "KeyK", "KeyL"):
+        await note(key_id, True)
 
     heard = world.transport.packets_of_type(listener, ItemPianoNoteBroadcastPacket)
-    assert (heard[-1].keyId, heard[-1].on) == ("KeyG", True)
+    assert [(packet.keyId, packet.on) for packet in heard[8:]] == [
+        ("KeyH", True),
+        ("KeyJ", True),
+        ("KeyK", True),
+        ("KeyL", True),
+    ]
 
 
 @pytest.mark.asyncio

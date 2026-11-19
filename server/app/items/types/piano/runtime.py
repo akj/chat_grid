@@ -139,7 +139,8 @@ class PianoRuntime:
             # Releasing a held key is never rate-limited, so listeners cannot be
             # left with a stuck note.
             active_keys.discard(packet.keyId)
-        elif not self.host.consume_rate_limit(client, "piano"):
+        else:
+            # Listeners never heard this key start, so there is nothing to release.
             return
         recording_state = self.recording_state_by_item.get(piano_item.id)
         if (
