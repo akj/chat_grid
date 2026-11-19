@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from math import isfinite
@@ -25,6 +26,8 @@ ELEVATOR_DOOR_OPEN_SOUND_SECONDS = 2.563107
 ELEVATOR_DOOR_CLOSE_SOUND_SECONDS = 3.765601
 ELEVATOR_TRAVEL_SECONDS = 5.0
 ELEVATOR_TRAVEL_UPDATE_SECONDS = 0.25
+
+LOGGER = logging.getLogger("chgrid.server.elevator")
 
 ItemResultCallback = Callable[
     [ClientConnection, bool, Literal["use"], str, str | None], Awaitable[None]
@@ -256,6 +259,9 @@ class ElevatorRuntime:
                 return
         except asyncio.CancelledError:
             return
+        except Exception:
+            LOGGER.exception("elevator cycle failed item_id=%s", item_id)
+            await self._return_to_idle(item_id)
         finally:
             current = self._tasks.get(item_id)
             if current is asyncio.current_task():
@@ -393,6 +399,24 @@ class ElevatorRuntime:
                     z=travel_z,
                 ),
             )
+
+    async def _return_to_idle(self, item_id: str) -> None:
+        """Park a car whose cycle failed at its last landing with the door closed."""
+
+        item = self.callbacks.get_item(item_id)
+        if item is None or item.type != "elevator":
+            return
+        item.params.update(
+            {
+                "targetZ": None,
+                "queuedZ": None,
+                "departOnCloseZ": None,
+                "state": "idle",
+                "doorOpen": False,
+            }
+        )
+        self._touch(item)
+        await self.callbacks.broadcast_item(item)
 
     def _touch(self, item: WorldItem) -> None:
         """Mark elevator state changed and schedule persistence."""

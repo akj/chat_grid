@@ -150,6 +150,7 @@ Core incoming message effects:
 - The client-owned elevator audio runtime loops the built-in interior ambience from a randomized file offset. Passengers hear it at full cabin level. Nearby landing users hear it fade in during opening and fade out during closing.
 - Continuous floor item emitters, radios, and voices crossing between a cabin and its current landing use that same door-transmission ramp. Continuous sources remain alive through the ramp instead of restarting at each door state.
 - On startup, any incomplete persisted elevator timer is cleared and the car becomes closed and idle at its last completed landing.
+- If an elevator timer step fails while running, the server logs the error and the car becomes closed and idle at its last completed landing, so it can be called again without a restart.
 - A process restart also drops items whose connection-scoped carrier no longer exists; a carried item caught at an intermediate travel height returns to the ground floor.
 
 ## Disconnect/Cleanup
@@ -161,6 +162,8 @@ On disconnect:
 - Stop local media tracks.
 - Cleanup peers and all audio runtimes.
 - Reset UI/mode state and lists.
+
+The server releases the user's item runtime state, saves their position and last-seen time, and drops carried items. Each step is logged and skipped on failure; other users always receive `user_left` and the logout message.
 
 ## Runtime Components
 
