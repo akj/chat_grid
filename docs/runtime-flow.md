@@ -167,7 +167,7 @@ The server releases the user's item runtime state, saves their position and last
 
 ## Runtime Components
 
-- `Delivery`: routes typed packets to one client or the authenticated roster through a transport. Production uses the websocket transport; server tests use a recording transport so delivery and fanout assertions do not patch server internals.
+- `Delivery`: routes typed packets to one client or the authenticated roster through a transport. Production uses the websocket transport; server tests use a recording transport so delivery and fanout assertions do not patch server internals. A websocket send that cannot finish within 5 seconds means the client stopped reading; the server aborts that connection so broadcasts, which wait for every recipient, keep flowing.
 - `PeerManager`: LiveKit room lifecycle and remote track attach.
 - `RadioStationRuntime`: shared stream sources + per-item output/effects/spatialization.
 - `ItemEmitRuntime`: per-item looping emit source + spatialization for all types except radio stations. The server composes editable emitter properties and validation into item plugins; the client uses those metadata rules in the shared editor. Empty, `none`, and `off` sound references disable generic playback.

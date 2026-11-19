@@ -26,8 +26,18 @@ class Transport(Protocol):
 class WebsocketTransport:
     """Serialize packets to websockets while isolating per-client failures."""
 
+    def __init__(self, send_timeout_seconds: float = 5.0) -> None:
+        """Set how long one send may wait for a client to accept data."""
+
+        self.send_timeout_seconds = send_timeout_seconds
+
     async def deliver(self, client: ClientConnection, packet: object) -> None:
-        """Send JSON, logging and ignoring missing sockets or send failures."""
+        """Send JSON, logging and ignoring missing sockets or send failures.
+
+        A send that cannot finish within the timeout means the client has
+        stopped reading. Its connection is aborted so that broadcasts, which
+        wait for every recipient, keep flowing to everyone else.
+        """
 
         if client.websocket is None:
             LOGGER.debug("send skipped: client %s has no websocket", client.id)
@@ -37,7 +47,11 @@ class WebsocketTransport:
                 data = packet.model_dump(exclude_none=True)
             else:
                 data = packet
-            await client.websocket.send(json.dumps(data))
+            async with asyncio.timeout(self.send_timeout_seconds):
+                await client.websocket.send(json.dumps(data))
+        except TimeoutError:
+            LOGGER.warning("send timed out; dropping stalled client %s", client.id)
+            client.websocket.transport.abort()
         except Exception as exc:
             LOGGER.debug("send failure: %s", exc)
 

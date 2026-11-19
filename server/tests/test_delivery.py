@@ -111,3 +111,50 @@ def test_websocket_transport_swallows_failures_and_serializes_packets() -> None:
         json.dumps(packet.model_dump(exclude_none=True)),
         json.dumps(raw_packet),
     ]
+
+
+def test_stalled_client_is_dropped_so_broadcasts_keep_flowing() -> None:
+    class StalledSocket:
+        def __init__(self) -> None:
+            self.transport = self
+            self.aborted = False
+
+        async def send(self, data: str) -> None:
+            await asyncio.Event().wait()
+
+        def abort(self) -> None:
+            self.aborted = True
+
+    class RecordingSocket:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        async def send(self, data: str) -> None:
+            self.messages.append(data)
+
+    stalled = _client("stalled")
+    stalled_socket = StalledSocket()
+    stalled.websocket = cast(ServerConnection, stalled_socket)
+    healthy = _client("healthy")
+    healthy_socket = RecordingSocket()
+    healthy.websocket = cast(ServerConnection, healthy_socket)
+    roster = {
+        cast(ServerConnection, object()): stalled,
+        cast(ServerConnection, object()): healthy,
+    }
+    delivery = Delivery(WebsocketTransport(send_timeout_seconds=0.05), roster)
+
+    async def scenario() -> None:
+        for message in ("one", "two"):
+            await asyncio.wait_for(
+                delivery.broadcast({"type": "custom", "message": message}),
+                timeout=1,
+            )
+
+    asyncio.run(scenario())
+
+    assert stalled_socket.aborted is True
+    assert [json.loads(raw)["message"] for raw in healthy_socket.messages] == [
+        "one",
+        "two",
+    ]
