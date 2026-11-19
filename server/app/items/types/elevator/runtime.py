@@ -408,11 +408,15 @@ class ElevatorRuntime:
         but not saved, because saving may be what failed.
         """
 
+        # Leave the task table so a use() during the broadcasts below starts a
+        # new cycle without cancelling this recovery.
+        if self._tasks.get(item_id) is asyncio.current_task():
+            self._tasks.pop(item_id, None)
         item = self.callbacks.get_item(item_id)
         if item is None or item.type != "elevator":
             return
-        # Settle all state before the first await: a use() during a broadcast
-        # restarts the cycle task, which would cancel this recovery midway.
+        # Settle all state before the first await, so a cycle started during
+        # the broadcasts sees a parked car with riders at the landing.
         item.params.update(
             {
                 "targetZ": None,

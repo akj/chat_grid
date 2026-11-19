@@ -131,3 +131,58 @@ async def test_disconnect_announces_departure_when_cleanup_fails(
     assert chat[-1].message == "leaving has logged out."
     assert carried.carrierId is None
     assert last_seen_users == ["42"]
+
+
+async def test_reopening_during_recovery_keeps_rider_broadcasts(
+    make_world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rider opening the door mid-recovery must not cancel position updates."""
+
+    world = make_world(grid_size=41)
+    server, transport = world.server, world.transport
+    observer = world.join("observer", x=40, y=40)
+    rider = world.join("rider", x=10, y=10, z=0, elevator_id="elevator-1")
+    second = world.join("second", x=10, y=10, z=0, elevator_id="elevator-1")
+    elevator = server.item_service.default_item(rider, "elevator")
+    elevator.id = "elevator-1"
+    elevator.params.update({"currentZ": 0, "targetZ": 40, "state": "moving"})
+    server.item_service.add_item(elevator)
+    runtime = server.item_runtime.elevator
+
+    async def immediate_sleep(_seconds: float) -> None:
+        return None
+
+    failed = False
+
+    def fail_once(*_args: object, **_kwargs: object) -> None:
+        nonlocal failed
+        if not failed:
+            failed = True
+            _fail_position_write()
+
+    record = transport.deliver
+    reopened = False
+
+    async def deliver(client, packet) -> None:
+        nonlocal reopened
+        if failed and not reopened:
+            reopened = True
+            await asyncio.create_task(runtime.use(rider, elevator))
+        await record(client, packet)
+
+    monkeypatch.setattr(asyncio, "sleep", immediate_sleep)
+    monkeypatch.setattr(server.auth_service, "set_last_position", fail_once)
+    monkeypatch.setattr(transport, "deliver", deliver)
+
+    runtime._restart_task(elevator.id)
+    await asyncio.gather(*list(runtime._tasks.values()), return_exceptions=True)
+    while runtime._tasks:
+        await asyncio.gather(*list(runtime._tasks.values()), return_exceptions=True)
+
+    assert reopened
+    second_positions = [
+        packet.z
+        for packet in transport.packets_of_type(observer, BroadcastPositionPacket)
+        if packet.id == second.id
+    ]
+    assert second_positions[-1] == 40
