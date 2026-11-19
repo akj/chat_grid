@@ -162,6 +162,12 @@ On disconnect:
 - Cleanup peers and all audio runtimes.
 - Reset UI/mode state and lists.
 
+## World State Files
+
+The server keeps world state in JSON files in the configured state directory: `items.json` (the configured state file), plus `structures.json`, `ambiances.json`, and `piano_songs.json` beside it. Each save rewrites a whole file through a synced temporary file and a rename, so a crash mid-save leaves either the previous file or the complete new one.
+
+If one of these files can't be loaded at startup, the server renames it to `<name>.unreadable-<UTC time>` (for example `items.json.unreadable-20261119T012014Z`), logs an error naming the new path, and starts without that state. Later saves create a fresh file, so the unreadable copy stays available for recovery. To restore it, stop the server, repair the copy, and rename it back.
+
 ## Runtime Components
 
 - `Delivery`: routes typed packets to one client or the authenticated roster through a transport. Production uses the websocket transport; server tests use a recording transport so delivery and fanout assertions do not patch server internals.

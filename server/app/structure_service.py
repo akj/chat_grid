@@ -11,6 +11,7 @@ import uuid
 
 from .client import ClientConnection
 from .models import WallStructure
+from .state_files import set_aside_unreadable, write_json_atomic
 
 LOGGER = logging.getLogger("chgrid.server.structures")
 
@@ -305,12 +306,8 @@ class StructureService:
         if self.state_file is None:
             return
         try:
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
             payload = [wall.model_dump() for wall in self.structures.values()]
-            self.state_file.write_text(
-                json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
-                encoding="utf-8",
-            )
+            write_json_atomic(self.state_file, payload)
         except Exception as exc:
             LOGGER.warning(
                 "failed to persist structures to %s: %s", self.state_file, exc
@@ -335,9 +332,7 @@ class StructureService:
         except Exception as exc:
             self.structures.clear()
             self._edges.clear()
-            LOGGER.warning(
-                "failed to load structures from %s: %s", self.state_file, exc
-            )
+            set_aside_unreadable(self.state_file, exc)
 
     @staticmethod
     def _preset_number(
