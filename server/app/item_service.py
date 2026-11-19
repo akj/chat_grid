@@ -203,7 +203,8 @@ class ItemService:
                 "loaded %d persisted items from %s", len(self.items), self.state_file
             )
         except Exception as exc:
-            set_aside_unreadable(self.state_file, exc)
+            if not set_aside_unreadable(self.state_file, exc):
+                self.state_file = None
 
     def load_piano_songs(self) -> None:
         """Load persisted piano song registry used by piano items."""
@@ -219,9 +220,9 @@ class ItemService:
             loaded: dict[str, dict] = {}
             for song_id, payload in raw.items():
                 if not isinstance(song_id, str) or not song_id.strip():
-                    continue
+                    raise ValueError("Piano song ids must be non-empty text.")
                 if not isinstance(payload, dict):
-                    continue
+                    raise ValueError(f"Piano song {song_id} must be an object.")
                 loaded[song_id] = payload
             self.piano_songs = loaded
             LOGGER.info(
@@ -230,7 +231,8 @@ class ItemService:
                 self.piano_songs_file,
             )
         except Exception as exc:
-            set_aside_unreadable(self.piano_songs_file, exc)
+            if not set_aside_unreadable(self.piano_songs_file, exc):
+                self.piano_songs_file = None
 
     def save_state(self) -> None:
         """Persist instance-only item data to configured state file."""

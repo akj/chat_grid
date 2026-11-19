@@ -282,7 +282,8 @@ class AmbianceService:
             self.ambiances = loaded
             LOGGER.info("loaded %d ambiances from %s", len(loaded), self.state_file)
         except Exception as exc:
-            set_aside_unreadable(self.state_file, exc)
+            if not set_aside_unreadable(self.state_file, exc):
+                self.state_file = None
 
     def _get(self, ambiance_id: str) -> AmbianceRegion:
         """Return one region or raise a mutation-friendly error."""

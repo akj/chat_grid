@@ -164,9 +164,9 @@ On disconnect:
 
 ## World State Files
 
-The server keeps world state in JSON files in the configured state directory: `items.json` (the configured state file), plus `structures.json`, `ambiances.json`, and `piano_songs.json` beside it. Each save rewrites a whole file through a synced temporary file and a rename, so a crash mid-save leaves either the previous file or the complete new one.
+The server keeps world state in JSON files in the configured state directory: `items.json` (the configured state file), plus `structures.json`, `ambiances.json`, and `piano_songs.json` beside it. Each save rewrites a whole file through a synced temporary file and a rename, so a crash mid-save leaves either the previous file or the complete new one. Saved files are readable and writable only by the server's account.
 
-If one of these files can't be loaded at startup, the server renames it to `<name>.unreadable-<UTC time>` (for example `items.json.unreadable-20261119T012014Z`), logs an error naming the new path, and starts without that state. Later saves create a fresh file, so the unreadable copy stays available for recovery. To restore it, stop the server, repair the copy, and rename it back.
+If one of these files can't be loaded at startup, including when one entry in it is invalid, the server renames it to `<name>.unreadable-<UTC time>` (for example `items.json.unreadable-20261119T012014123456Z`), logs an error naming the new path, and starts without that state. Later saves create a fresh file, so the unreadable copy stays available for recovery. To restore it, stop the server, repair the copy, and rename it back. If the file can't be renamed, or the configured path isn't a regular file, the server logs an error and doesn't save that state until it restarts, so the original is never replaced.
 
 ## Runtime Components
 

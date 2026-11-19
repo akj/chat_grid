@@ -332,7 +332,8 @@ class StructureService:
         except Exception as exc:
             self.structures.clear()
             self._edges.clear()
-            set_aside_unreadable(self.state_file, exc)
+            if not set_aside_unreadable(self.state_file, exc):
+                self.state_file = None
 
     @staticmethod
     def _preset_number(

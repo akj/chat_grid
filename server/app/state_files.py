@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 import os
 from pathlib import Path
 import tempfile
-import time
 
 LOGGER = logging.getLogger("chgrid.server.state_files")
 
@@ -41,31 +41,40 @@ def write_json_atomic(path: Path, payload: object) -> None:
         raise
 
 
-def set_aside_unreadable(path: Path, error: Exception) -> None:
+def set_aside_unreadable(path: Path, error: Exception) -> bool:
     """Rename a state file that failed to load so later saves cannot replace it.
 
     The file keeps its name with an `.unreadable-<UTC time>` suffix next to the
-    original, where an admin can inspect or restore it. The server then starts
-    without that state.
+    original, where an admin can inspect or restore it. Returns False when
+    `path` is not a regular file or cannot be renamed; the caller must then
+    stop saving to `path` for this run, or the next save would replace it.
     """
 
-    target = path.with_name(
-        f"{path.name}.unreadable-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
-    )
+    if not path.is_file():
+        LOGGER.error(
+            "could not load %s (%s); it is not a regular file, so saving it is "
+            "disabled until restart",
+            path,
+            error,
+        )
+        return False
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    target = path.with_name(f"{path.name}.unreadable-{stamp}")
     try:
         os.replace(path, target)
     except OSError as rename_error:
         LOGGER.error(
-            "could not load %s (%s) and could not set it aside (%s); "
-            "the next save will replace it",
+            "could not load %s (%s) or set it aside (%s); saving it is disabled "
+            "until restart",
             path,
             error,
             rename_error,
         )
-        return
+        return False
     LOGGER.error(
         "could not load %s (%s); kept it as %s and started without it",
         path,
         error,
         target,
     )
+    return True

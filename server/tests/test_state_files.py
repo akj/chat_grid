@@ -11,12 +11,18 @@ import pytest
 from .conftest import World
 
 STATE_FILES = ["items.json", "structures.json", "ambiances.json", "piano_songs.json"]
-# A save cut off partway through, and well-formed JSON of the wrong shape.
-UNREADABLE_CONTENTS = ['[{"id":"i1","type":"dice"', '{"not":"the expected shape"}']
-PIANO_SONGS_UNREADABLE_CONTENTS = [
-    '{"s1":{"notes":[',
-    '["not","the","expected","shape"]',
-]
+# A save cut off partway through, well-formed JSON of the wrong shape, and the
+# right shape holding an invalid entry.
+UNREADABLE_CONTENTS = {
+    "truncated": '[{"id":"i1","type":"dice"',
+    "wrong-shape": '{"not":"the expected shape"}',
+    "bad-entry": '[{"id":"i1"}]',
+}
+PIANO_SONGS_UNREADABLE_CONTENTS = {
+    "truncated": '{"s1":{"notes":[',
+    "wrong-shape": '["not","the","expected","shape"]',
+    "bad-entry": '{"s1":[]}',
+}
 
 
 @pytest.fixture
@@ -66,9 +72,9 @@ def set_aside_copies(directory: Path, name: str) -> list[Path]:
 
 
 @pytest.mark.parametrize("name", STATE_FILES)
-@pytest.mark.parametrize("variant", [0, 1], ids=["truncated", "wrong-shape"])
+@pytest.mark.parametrize("variant", list(UNREADABLE_CONTENTS))
 def test_unreadable_state_file_is_kept_when_the_world_is_next_saved(
-    make_grid: Callable[[], World], tmp_path: Path, name: str, variant: int
+    make_grid: Callable[[], World], tmp_path: Path, name: str, variant: str
 ) -> None:
     contents = (
         PIANO_SONGS_UNREADABLE_CONTENTS
@@ -123,3 +129,42 @@ def test_interrupted_save_leaves_every_previous_file_intact(
     assert sorted(path.name for path in tmp_path.iterdir() if path.is_file()) == sorted(
         [*STATE_FILES, "auth.db"]
     )
+
+
+@pytest.mark.parametrize("name", STATE_FILES)
+def test_unreadable_file_that_cannot_be_set_aside_is_never_saved_over(
+    make_grid: Callable[[], World],
+    tmp_path: Path,
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contents = UNREADABLE_CONTENTS["truncated"]
+    (tmp_path / name).write_text(contents, encoding="utf-8")
+    real_replace = os.replace
+
+    def refuse_set_aside(src: str | Path, dst: str | Path) -> None:
+        if ".unreadable-" in str(dst):
+            raise PermissionError("simulated read-only directory")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", refuse_set_aside)
+    world = make_grid()
+    change_everything(world)
+    save_everything(world)
+
+    assert (tmp_path / name).read_text(encoding="utf-8") == contents
+    assert set_aside_copies(tmp_path, name) == []
+
+
+def test_state_path_that_is_a_directory_is_left_in_place(
+    make_world, tmp_path: Path
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "chatgrid.db").write_bytes(b"accounts")
+
+    world = make_world(state_file=runtime, auth_db_path=tmp_path / "auth.db")
+    save_everything(world)
+
+    assert list(tmp_path.glob("*.unreadable-*")) == []
+    assert (runtime / "chatgrid.db").read_bytes() == b"accounts"
