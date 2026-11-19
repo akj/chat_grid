@@ -440,10 +440,13 @@ class ElevatorRuntime:
                 carried.x, carried.y, carried.z = rider.x, rider.y, rider.z
                 carried_items.append(carried)
         await self.callbacks.broadcast_item(item)
+        # Items and riders can leave during these awaits; don't resurrect them.
         for carried in carried_items:
-            await self.callbacks.broadcast_item(carried)
+            if self.callbacks.get_item(carried.id) is carried:
+                await self.callbacks.broadcast_item(carried)
         for rider in riders:
-            await self.delivery.broadcast(client_position_packet(rider))
+            if any(client is rider for client in self.callbacks.iter_clients()):
+                await self.delivery.broadcast(client_position_packet(rider))
 
     def _touch(self, item: WorldItem) -> None:
         """Mark elevator state changed and schedule persistence."""

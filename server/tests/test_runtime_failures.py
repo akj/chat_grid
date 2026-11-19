@@ -186,3 +186,62 @@ async def test_reopening_during_recovery_keeps_rider_broadcasts(
         if packet.id == second.id
     ]
     assert second_positions[-1] == 40
+
+
+async def test_recovery_skips_items_and_riders_gone_mid_broadcast(
+    make_world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recovery must not resurrect an item or rider removed while it awaits."""
+
+    world = make_world(grid_size=41)
+    server, transport = world.server, world.transport
+    observer = world.join("observer", x=40, y=40)
+    rider = world.join("rider", x=10, y=10, z=0, elevator_id="elevator-1")
+    second = world.join("second", x=10, y=10, z=0, elevator_id="elevator-1")
+    elevator = server.item_service.default_item(rider, "elevator")
+    elevator.id = "elevator-1"
+    elevator.params.update({"currentZ": 0, "targetZ": 40, "state": "moving"})
+    server.item_service.add_item(elevator)
+    carried = server.item_service.default_item(second, "dice")
+    carried.carrierId = second.id
+    server.item_service.add_item(carried)
+
+    async def immediate_sleep(_seconds: float) -> None:
+        return None
+
+    failed = False
+
+    def fail_position_write(*_args: object, **_kwargs: object) -> None:
+        nonlocal failed
+        failed = True
+        _fail_position_write()
+
+    record = transport.deliver
+    removed_at: int | None = None
+
+    async def deliver(client, packet) -> None:
+        nonlocal removed_at
+        if failed and removed_at is None:
+            server.item_service.items.pop(carried.id)
+            server.clients.pop(second.websocket)
+            removed_at = len(transport.packets_to(observer))
+        await record(client, packet)
+
+    monkeypatch.setattr(asyncio, "sleep", immediate_sleep)
+    monkeypatch.setattr(server.auth_service, "set_last_position", fail_position_write)
+    monkeypatch.setattr(transport, "deliver", deliver)
+
+    await server.item_runtime.elevator.run_cycle(elevator.id)
+
+    assert removed_at is not None
+    after = transport.packets_to(observer)[removed_at:]
+    assert not [
+        packet
+        for packet in after
+        if isinstance(packet, ItemUpsertPacket) and packet.item.id == carried.id
+    ]
+    assert not [
+        packet
+        for packet in after
+        if isinstance(packet, BroadcastPositionPacket) and packet.id == second.id
+    ]
