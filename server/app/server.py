@@ -1015,15 +1015,37 @@ class SignalingServer:
         finally:
             if websocket in self.clients:
                 disconnected = self.clients.pop(websocket)
-                await self.item_runtime.prepare_client_disconnect(disconnected)
-                self._persist_client_position(disconnected, force=True)
-                self._persist_client_last_seen(disconnected, force=True)
+                # Each step is guarded so one failure cannot skip the rest or
+                # stop other users from hearing that this user left.
+                try:
+                    await self.item_runtime.prepare_client_disconnect(disconnected)
+                except Exception:
+                    LOGGER.exception(
+                        "disconnect item release failed id=%s", disconnected.id
+                    )
+                try:
+                    self._persist_client_position(disconnected, force=True)
+                except Exception:
+                    LOGGER.exception(
+                        "disconnect position save failed id=%s", disconnected.id
+                    )
+                try:
+                    self._persist_client_last_seen(disconnected, force=True)
+                except Exception:
+                    LOGGER.exception(
+                        "disconnect last-seen save failed id=%s", disconnected.id
+                    )
                 if disconnected.user_id:
                     self._last_position_persist_ms_by_user.pop(
                         disconnected.user_id, None
                     )
                     self._last_seen_persist_ms_by_user.pop(disconnected.user_id, None)
-                await self.item_runtime.finish_client_disconnect(disconnected)
+                try:
+                    await self.item_runtime.finish_client_disconnect(disconnected)
+                except Exception:
+                    LOGGER.exception(
+                        "disconnect carried-item drop failed id=%s", disconnected.id
+                    )
                 LOGGER.info(
                     "client disconnected id=%s nickname=%s total=%d",
                     disconnected.id,

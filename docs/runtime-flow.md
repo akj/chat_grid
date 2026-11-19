@@ -150,6 +150,7 @@ Core incoming message effects:
 - The client-owned elevator audio runtime loops the built-in interior ambience from a randomized file offset. Passengers hear it at full cabin level. Nearby landing users hear it fade in during opening and fade out during closing.
 - Continuous floor item emitters, radios, and voices crossing between a cabin and its current landing use that same door-transmission ramp. Continuous sources remain alive through the ramp instead of restarting at each door state.
 - On startup, any incomplete persisted elevator timer is cleared and the car becomes closed and idle at its last completed landing.
+- If an elevator timer step fails while running, the server logs the error and the car becomes closed and idle at its last completed landing, with its riders and their carried items placed there, so it can be called again without a restart.
 - A process restart also drops items whose connection-scoped carrier no longer exists; a carried item caught at an intermediate travel height returns to the ground floor.
 
 ## Disconnect/Cleanup
@@ -162,9 +163,17 @@ On disconnect:
 - Cleanup peers and all audio runtimes.
 - Reset UI/mode state and lists.
 
+The server releases the user's item runtime state, saves their position and last-seen time, and drops carried items. Each step is logged and skipped on failure; other users always receive `user_left` and the logout message.
+
+## World State Files
+
+The server keeps world state in JSON files in the configured state directory: `items.json` (the configured state file), plus `structures.json`, `ambiances.json`, and `piano_songs.json` beside it. Each save rewrites a whole file through a synced temporary file and a rename, so a crash mid-save leaves either the previous file or the complete new one. Saved files are readable and writable only by the server's account.
+
+If one of these files can't be loaded at startup, including when one entry in it is invalid, the server renames it to `<name>.unreadable-<UTC time>` (for example `items.json.unreadable-20261119T012014123456Z`), logs an error naming the new path, and starts without that state. Later saves create a fresh file, so the unreadable copy stays available for recovery. If the state file is a symlink, the copy lands beside the link's target under the target's name, and the link is kept. To restore it, stop the server, repair the copy, and rename it back. If the file can't be set aside, for example because the state directory can't be accessed or the configured path isn't a regular file, the server logs an error and doesn't save that state until it restarts, so the original is never replaced. Only a missing file counts as a first run.
+
 ## Runtime Components
 
-- `Delivery`: routes typed packets to one client or the authenticated roster through a transport. Production uses the websocket transport; server tests use a recording transport so delivery and fanout assertions do not patch server internals.
+- `Delivery`: routes typed packets to one client or the authenticated roster through a transport. Production uses the websocket transport; server tests use a recording transport so delivery and fanout assertions do not patch server internals. A websocket send that cannot finish within 5 seconds means the client stopped reading; the server aborts that connection so broadcasts, which wait for every recipient, keep flowing.
 - `PeerManager`: LiveKit room lifecycle and remote track attach.
 - `RadioStationRuntime`: shared stream sources + per-item output/effects/spatialization.
 - `ItemEmitRuntime`: per-item looping emit source + spatialization for all types except radio stations. The server composes editable emitter properties and validation into item plugins; the client uses those metadata rules in the shared editor. Empty, `none`, and `off` sound references disable generic playback.

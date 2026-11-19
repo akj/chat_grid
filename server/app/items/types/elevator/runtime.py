@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from math import isfinite
@@ -25,6 +26,8 @@ ELEVATOR_DOOR_OPEN_SOUND_SECONDS = 2.563107
 ELEVATOR_DOOR_CLOSE_SOUND_SECONDS = 3.765601
 ELEVATOR_TRAVEL_SECONDS = 5.0
 ELEVATOR_TRAVEL_UPDATE_SECONDS = 0.25
+
+LOGGER = logging.getLogger("chgrid.server.elevator")
 
 ItemResultCallback = Callable[
     [ClientConnection, bool, Literal["use"], str, str | None], Awaitable[None]
@@ -256,6 +259,9 @@ class ElevatorRuntime:
                 return
         except asyncio.CancelledError:
             return
+        except Exception:
+            LOGGER.exception("elevator cycle failed item_id=%s", item_id)
+            await self._return_to_idle(item_id)
         finally:
             current = self._tasks.get(item_id)
             if current is asyncio.current_task():
@@ -393,6 +399,54 @@ class ElevatorRuntime:
                     z=travel_z,
                 ),
             )
+
+    async def _return_to_idle(self, item_id: str) -> None:
+        """Park a car whose cycle failed at its last landing with the door closed.
+
+        Riders and their carried items are placed at that landing too, since the
+        failure may have left them at a travel height. Positions are broadcast
+        but not saved, because saving may be what failed.
+        """
+
+        # Leave the task table so a use() during the broadcasts below starts a
+        # new cycle without cancelling this recovery.
+        if self._tasks.get(item_id) is asyncio.current_task():
+            self._tasks.pop(item_id, None)
+        item = self.callbacks.get_item(item_id)
+        if item is None or item.type != "elevator":
+            return
+        # Settle all state before the first await, so a cycle started during
+        # the broadcasts sees a parked car with riders at the landing.
+        item.params.update(
+            {
+                "targetZ": None,
+                "queuedZ": None,
+                "departOnCloseZ": None,
+                "state": "idle",
+                "doorOpen": False,
+            }
+        )
+        self._touch(item)
+        landing_z = int(item.params.get("currentZ", 0))
+        riders = [
+            rider
+            for rider in self.callbacks.iter_clients()
+            if rider.elevator_id == item.id
+        ]
+        carried_items: list[WorldItem] = []
+        for rider in riders:
+            rider.x, rider.y, rider.z = item.x, item.y, landing_z
+            for carried in self.callbacks.find_carried_items(rider.id):
+                carried.x, carried.y, carried.z = rider.x, rider.y, rider.z
+                carried_items.append(carried)
+        await self.callbacks.broadcast_item(item)
+        # Items and riders can leave during these awaits; don't resurrect them.
+        for carried in carried_items:
+            if self.callbacks.get_item(carried.id) is carried:
+                await self.callbacks.broadcast_item(carried)
+        for rider in riders:
+            if any(client is rider for client in self.callbacks.iter_clients()):
+                await self.delivery.broadcast(client_position_packet(rider))
 
     def _touch(self, item: WorldItem) -> None:
         """Mark elevator state changed and schedule persistence."""
